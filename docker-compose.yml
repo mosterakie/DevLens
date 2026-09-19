@@ -1,23 +1,35 @@
-# 开发用的依赖服务。
+# 本地与部署共用的编排文件。
 #
-# 如果本机已经装了 PostgreSQL 和 Redis，可以不用这个文件，
-# 直接按 .env.example 里的地址连接即可。
+# 服务分两组，用 profile 区分，这样一个文件覆盖两种场景：
+#
+#   只要依赖（开发机上跑 go run，需要热重载）
+#     docker compose up postgres redis
+#
+#   全部服务（别的机器、演示、部署）
+#     docker compose --profile full up
+#
+# 端口都可用环境变量覆盖。开发机上如果已经装了原生的 PostgreSQL
+# 或 Redis，把对应端口改掉即可，例如 POSTGRES_PORT=5433。
+
 services:
   postgres:
-    image: postgres:16-alpine
+    image: postgres:18-alpine
     environment:
       POSTGRES_USER: devlens
       POSTGRES_PASSWORD: devlens
       POSTGRES_DB: devlens
     ports:
-      - "5432:5432"
+      # 默认 5432；本机已有原生 PostgreSQL 时用 POSTGRES_PORT 改掉。
+      - "${POSTGRES_PORT:-5432}:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
+      # 没有 healthcheck 时容器"已启动"但还不能接受连接，
+      # 依赖它的服务会随机失败。
       test: ["CMD-SHELL", "pg_isready -U devlens"]
       interval: 5s
       timeout: 3s
-      retries: 5
+      retries: 10
 
   redis:
     image: redis:7-alpine
@@ -25,12 +37,63 @@ services:
     # 队列里还没处理的任务。
     command: ["redis-server", "--appendonly", "yes"]
     ports:
-      - "6379:6379"
+      - "${REDIS_PORT:-6379}:6379"
     volumes:
       - redisdata:/data
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
+      timeout: 3s
+      retries: 10
+
+  api:
+    profiles: ["full"]
+    build:
+      context: .
+      dockerfile: Dockerfile
+    environment:
+      # 容器内用服务名访问，不走宿主机端口。
+      DATABASE_URL: postgres://devlens:devlens@postgres:5432/devlens?sslmode=disable
+      REDIS_ADDR: redis:6379
+      PORT: "8080"
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      LLM_MODEL: ${LLM_MODEL:-deepseek-flash}
+      LLM_BASE_URL: ${LLM_BASE_URL:-https://api.deepseek.com}
+      LLM_JSON_MODE: ${LLM_JSON_MODE:-true}
+      LLM_MAX_TOKENS: ${LLM_MAX_TOKENS:-4096}
+    ports:
+      - "${API_PORT:-8080}:8080"
+    depends_on:
+      # 等健康检查通过再启动，否则连接会被拒。
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  worker:
+    profiles: ["full"]
+    build:
+      context: .
+      dockerfile: Dockerfile
+    # 同一个镜像，只是入口不同。
+    entrypoint: ["/app/worker"]
+    environment:
+      DATABASE_URL: postgres://devlens:devlens@postgres:5432/devlens?sslmode=disable
+      REDIS_ADDR: redis:6379
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      # 留空时 worker 退回本地启发式分析器，整条链路仍可端到端跑通。
+      LLM_API_KEY: ${LLM_API_KEY:-}
+      LLM_MODEL: ${LLM_MODEL:-deepseek-flash}
+      LLM_BASE_URL: ${LLM_BASE_URL:-https://api.deepseek.com}
+      LLM_JSON_MODE: ${LLM_JSON_MODE:-true}
+      LLM_MAX_TOKENS: ${LLM_MAX_TOKENS:-4096}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
 
 volumes:
   pgdata:

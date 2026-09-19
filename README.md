@@ -23,6 +23,20 @@ POST /analyze ──> 归一化 ──> 指纹 ──> 查同类 ──> 入库 
 
 ## 运行
 
+先检查环境：
+
+```bash
+go run ./cmd/devcheck
+```
+
+它会检查 PostgreSQL 与 Redis 是否在跑、`.env` 是否就绪、api 端口是否空闲
+（被占用时给出替代端口）。全部通过后再启动：
+
+```bash
+go run ./cmd/api      # 一个窗口
+go run ./cmd/worker   # 另一个窗口
+```
+
 需要 PostgreSQL 和 Redis。用 Docker 的话：
 
 ```bash
