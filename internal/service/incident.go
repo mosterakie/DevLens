@@ -128,6 +128,18 @@ func (s *IncidentService) Related(ctx context.Context, fp []byte, excludeID int6
 	return s.repo.FindRelated(ctx, fp, excludeID, s.relatedLimit)
 }
 
+// RelatedByIncidentID 按 Incident ID 查找同类问题。
+//
+// 调用方通常只知道 ID，不知道指纹，所以这里先取记录再匹配。
+// 找不到记录时返回 repository.ErrNotFound，由 handler 映射成 404。
+func (s *IncidentService) RelatedByIncidentID(ctx context.Context, id int64) ([]repository.RelatedIncident, error) {
+	inc, err := s.repo.GetByID(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	return s.repo.FindRelated(ctx, inc.Fingerprint, inc.ID, s.relatedLimit)
+}
+
 // List 读取列表。
 func (s *IncidentService) List(ctx context.Context, f repository.ListFilter) ([]*domain.Incident, error) {
 	return s.repo.List(ctx, f)

@@ -62,6 +62,7 @@ curl http://127.0.0.1:8080/api/v1/incidents/1
 | POST | `/api/v1/incidents/analyze` | 提交日志，返回 202 |
 | GET | `/api/v1/incidents/:id` | 查询详情，分析中时 `analysis` 为 null |
 | GET | `/api/v1/incidents` | 列表，游标分页 |
+| GET | `/api/v1/incidents/:id/related` | 同类问题（按指纹匹配） |
 | GET | `/api/v1/incidents/:id/events` | 状态变更时间线 |
 | PATCH | `/api/v1/incidents/:id/status` | 状态转移 |
 | GET | `/healthz` `/readyz` | 存活与就绪 |

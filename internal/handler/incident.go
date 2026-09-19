@@ -92,6 +92,10 @@ type eventsResponse struct {
 	Items []eventDTO `json:"items"`
 }
 
+type relatedResponse struct {
+	Items []relatedIncidentDTO `json:"items"`
+}
+
 type statusRequest struct {
 	Status domain.Status `json:"status"`
 }
@@ -224,6 +228,36 @@ func (h *IncidentHandler) List(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, resp)
+}
+
+// Related 处理 GET /api/v1/incidents/:id/related。
+//
+// 同类问题在提交时已经算过一次，这个端点让详情页也能拿到，
+// 而不必依赖提交时的响应。
+func (h *IncidentHandler) Related(c *gin.Context) {
+	id, ok := parseID(c)
+	if !ok {
+		return
+	}
+
+	items, err := h.svc.RelatedByIncidentID(c.Request.Context(), id)
+	if err != nil {
+		failFromError(c, err)
+		return
+	}
+
+	out := make([]relatedIncidentDTO, 0, len(items))
+	for _, r := range items {
+		out = append(out, relatedIncidentDTO{
+			ID:        r.ID,
+			Title:     r.Title,
+			Severity:  severityPtrFromPtr(r.Severity),
+			Status:    r.Status,
+			CreatedAt: r.CreatedAt,
+		})
+	}
+
+	c.JSON(http.StatusOK, relatedResponse{Items: out})
 }
 
 // Events 处理 GET /api/v1/incidents/:id/events。

@@ -1,4 +1,4 @@
-﻿# API 契约
+# API 契约
 
 Base path `/api/v1`，响应统一 `application/json; charset=utf-8`。
 
@@ -113,6 +113,21 @@ GET /api/v1/incidents?status=OPEN&severity=HIGH&limit=20&cursor=...
   ]
 }
 ```
+
+### GET /incidents/:id/related
+
+返回与该 Incident 指纹相同的其他记录，用于详情页展示同类问题。
+
+```json
+{
+  "items": [
+    { "id": 981, "title": "Payment timeout", "severity": "HIGH",
+      "status": "RESOLVED", "created_at": "..." }
+  ]
+}
+```
+
+没有同类时返回空数组而不是 null，前端不必额外判空。
 
 ### PATCH /incidents/:id/status
 

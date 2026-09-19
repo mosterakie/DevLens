@@ -151,6 +151,7 @@ func buildRouter(
 	v1.GET("/incidents", readLimit, h.List)
 	v1.GET("/incidents/:id", readLimit, h.Get)
 	v1.GET("/incidents/:id/events", readLimit, h.Events)
+	v1.GET("/incidents/:id/related", readLimit, h.Related)
 	v1.PATCH("/incidents/:id/status", readLimit, h.ChangeStatus)
 
 	// 健康检查放在限流之外：编排系统探测不该被限流挡住，

@@ -162,40 +162,44 @@ function render(inc) {
   pre.appendChild(code);
   contentEl.appendChild(pre);
 
-  // 相关事件
+  // 同类问题
   contentEl.appendChild(el('h3', null, 'Related incidents'));
   const relatedBox = el('div', 'panel');
   relatedBox.id = 'related';
   relatedBox.className = 'panel empty';
-  relatedBox.textContent = 'None yet.';
+  relatedBox.textContent = 'Loading…';
   contentEl.appendChild(relatedBox);
-  loadRelated(inc);
+  loadRelated();
 }
 
-async function loadRelated(inc) {
+async function loadRelated() {
   const box = document.getElementById('related');
   if (!box) return;
   try {
-    // related 由后端在提交时算好，这里通过列表接口按指纹无法查询，
-    // 所以退一步：展示同 category 的其他条目作为参考。
-    const res = await getJSON('/incidents?limit=50');
-    const others = (res.items || []).filter(
-      i => i.id !== inc.id && i.category && i.category === inc.category
-    );
-    if (!others.length) return;
+    // 后端按 fingerprint 匹配，所以判定的是"本质相同的错误"，
+    // 而不是"分类相同的错误"。
+    const res = await getJSON('/incidents/' + id + '/related');
+    const items = res.items || [];
+    if (!items.length) {
+      box.className = 'panel empty';
+      box.textContent = 'No earlier incident shares this fingerprint.';
+      return;
+    }
     box.className = 'panel';
     box.innerHTML = '';
     const ul = el('ul', 'plain');
-    others.slice(0, 5).forEach(o => {
+    items.forEach(o => {
       const li = el('li');
       li.appendChild(linkIncident(o.id));
       li.appendChild(document.createTextNode(' ' + (o.title || '')));
       if (o.severity) li.appendChild(document.createTextNode(' · ' + o.severity));
+      if (o.status) li.appendChild(document.createTextNode(' · ' + o.status));
       ul.appendChild(li);
     });
     box.appendChild(ul);
-  } catch (_) {
-    // 参考信息，取不到就不显示。
+  } catch (err) {
+    box.className = 'panel empty';
+    box.textContent = 'Could not load related incidents.';
   }
 }
 
