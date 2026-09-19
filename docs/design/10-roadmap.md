@@ -3,7 +3,7 @@
 | # | 里程碑 | 产出 | 可验证 |
 |---|---|---|---|
 | M0 | 骨架 | 仓库结构、docker-compose、迁移 | `docker compose up` + `migrate up` 成功 |
-| M1 | 纯逻辑 | fingerprint + domain（状态机） | `go test -race ./internal/...` 全绿 |
+| M1 | 纯逻辑 | fingerprint + domain（状态机） | ✅ 已完成，`go test ./...` 全绿 |
 | M2 | 同步链路 | POST /analyze、fingerprint 命中同类 | 能看到 `related_incident_ids` |
 | M3 | 异步链路 | worker + LLM 调用 + 写 analysis | 轮询看到 status=OPEN 和诊断 |
 | M4 | 前端 4 页 | Landing / Analyze / List / Detail | 能独立走完 Demo |
@@ -13,19 +13,26 @@
 顺序不要调换，尤其 M1 要在 M2 之前 —— fingerprint 是后面所有设计的基础，
 写错了要返工。
 
-## M1
+## M1 ✅
+
+已实现：
 
 ```
 internal/fingerprint/
-  normalize.go        规则表驱动
-  hash.go             SHA-256 + 截断
-  normalize_test.go   表驱动 + 幂等 + 反向断言
+  normalize.go        16 条规则表 + 截断
+  hash.go             SHA-256 截断到 128 位
 internal/domain/
-  status.go           状态枚举 + ValidTransition
-  incident.go         纯结构体 + 校验
+  status.go           状态枚举 + CanTransitionTo
+  severity.go         严重程度枚举 + ParseSeverity
+  incident.go         Incident / Analysis / Evidence + 校验
 ```
 
-完成标准：`go test -race ./internal/...` 全绿。
+实现中确认的两个细节，已回写到 04-fingerprint.md：
+
+- 占位符必须全小写。转小写若发生在替换之后，第二次调用会改写占位符，
+  幂等性被破坏。幂等性测试正是抓到这一点的原因。
+- 转小写若发生在匹配之前，ISO8601 的正则必须匹配小写 `t`/`z`，
+  否则时间戳会退化成 `<n>-<n>-<n>` 并被后续规则进一步拆散。
 
 ## M2
 

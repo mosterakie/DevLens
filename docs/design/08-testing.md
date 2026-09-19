@@ -110,11 +110,13 @@ markdown fence 那项是实际中最常遇到的 —— LLM 很爱在 JSON 外�
 
 ```bash
 go test ./...                     # 单元
-go test -race ./...               # 竞态检测，CI 必跑
+go test -race ./...               # 竞态检测，需要 gcc
 go test -tags=integration ./...   # 集成，需要 docker
 ```
 
-`-race` 进 CI 是因为 api 和 worker 共享代码，竞态可能只在并发下暴露。
+`-race` 需要 CGO 和一个 C 编译器。Windows 开发机上如果没有 gcc，
+本地跑不了，这条要在 CI 里保证执行 —— api 和 worker 共享代码，
+竞态可能只在并发下暴露，本地串行测试看不到。
 
 ## 不测的
 
