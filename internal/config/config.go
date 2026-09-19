@@ -26,6 +26,9 @@ type Config struct {
 	LLMBaseURL string
 	// LLMJSONMode 开启后请求服务端保证输出合法 JSON。
 	LLMJSONMode bool
+	// LLMMaxTokens 是单次调用的输出上限。设小了会截断 JSON，
+	// 截断的内容无法解析且重试也无用。
+	LLMMaxTokens int
 
 	AnalyzeTimeout time.Duration
 
@@ -78,6 +81,9 @@ func loadFromEnv() (*Config, error) {
 		return nil, err
 	}
 	if c.AnalyzeTimeout, err = envDuration("ANALYZE_TIMEOUT", 25*time.Second); err != nil {
+		return nil, err
+	}
+	if c.LLMMaxTokens, err = envInt("LLM_MAX_TOKENS", 4096); err != nil {
 		return nil, err
 	}
 

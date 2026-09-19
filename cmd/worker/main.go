@@ -85,7 +85,7 @@ func chooseAnalyzer(cfg *config.Config, log *slog.Logger) analyzer.Analyzer {
 		BaseURL:     cfg.LLMBaseURL,
 		Timeout:     cfg.AnalyzeTimeout,
 		MaxAttempts: 3,
-		MaxTokens:   2048,
+		MaxTokens:   cfg.LLMMaxTokens,
 		JSONMode:    cfg.LLMJSONMode,
 	})
 }

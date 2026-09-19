@@ -29,6 +29,8 @@ Respond with ONLY a JSON object, no markdown fences, matching this schema:
 }
 
 Rules:
+- Be concise. summary is at most 2 sentences. List at most 4 possible_causes,
+  at most 4 evidence items and at most 4 suggested_actions, each one line.
 - possible_causes must be a list of candidates, never a single definitive cause.
 - evidence must quote values that actually appear in the log, with their line number.
 - If the log does not contain enough information, set confidence below 0.5

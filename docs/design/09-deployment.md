@@ -89,8 +89,8 @@ LLM_JSON_MODE=true
 - `LLM_JSON_MODE=true` 会发送 `response_format: {"type":"json_object"}`。
   DeepSeek 的 JSON Output 要求 prompt 里出现 "json" 字样并提供格式示例，
   系统提示词已满足；换成不支持该参数的兼容服务时设为 false。
-- `max_tokens` 设成 2048 而不是更小。JSON 被中途截断会直接导致解析失败，
-  文档也提示要留足额度。
+- `LLM_MAX_TOKENS` 默认 4096。实测分析一条普通日志约 2400 tokens，
+  2048 会把输出截在半个字符串中间，而截断的 JSON 无法解析且重试无用。
 - DeepSeek 文档说明 JSON Output 偶尔返回空 content，所以空响应必须
   触发重试。这一条有对应的测试。
 

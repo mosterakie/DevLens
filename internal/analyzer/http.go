@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"math/rand"
@@ -79,6 +80,10 @@ type responseFormat struct {
 type chatResponse struct {
 	Choices []struct {
 		Message chatMessage `json:"message"`
+		// FinishReason 为 "length" 表示输出被 max_tokens 截断。
+		// 截断的 JSON 必然非法，且重试也会得到同样的结果，
+		// 所以必须单独识别出来，而不是等解析失败。
+		FinishReason string `json:"finish_reason"`
 	} `json:"choices"`
 	Error *struct {
 		Message string `json:"message"`
@@ -108,11 +113,19 @@ func (a *HTTPAnalyzer) Analyze(ctx context.Context, in Input) (Result, error) {
 
 		raw, err := a.call(ctx, in, attempt)
 		if err != nil {
-			return Result{}, err
+			// 只有瞬时故障值得重试。4xx、截断这类确定性错误
+			// 立刻返回，免得白费调用。
+			if !errors.Is(err, ErrRetryable) {
+				return Result{}, err
+			}
+			lastErr = fmt.Errorf("attempt %d: %w", attempt, err)
+			continue
 		}
 
 		parsed, err := Parse(in.IncidentID, a.Name(), raw)
 		if err != nil {
+			// 解析失败属于可重试：重试时会收紧 prompt 约束，
+			// 有机会拿到合法 JSON。
 			lastErr = fmt.Errorf("attempt %d (%s): %w", attempt, describeAttempt(attempt), err)
 			continue
 		}
@@ -160,7 +173,8 @@ func (a *HTTPAnalyzer) call(ctx context.Context, in Input, attempt int) (string,
 
 	resp, err := a.client.Do(req)
 	if err != nil {
-		return "", fmt.Errorf("call llm: %w", err)
+		// 网络层面的失败通常是瞬时的，值得重试。
+		return "", fmt.Errorf("%w: call llm: %v", ErrRetryable, err)
 	}
 	defer resp.Body.Close()
 
@@ -172,7 +186,13 @@ func (a *HTTPAnalyzer) call(ctx context.Context, in Input, attempt int) (string,
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("llm returned status %d: %s", resp.StatusCode, truncate(string(data), 300))
+		detail := truncate(string(data), 300)
+		// 5xx 和 429 是服务端瞬时状态；4xx 是请求本身有问题，
+		// 重试只会重复失败。
+		if resp.StatusCode >= 500 || resp.StatusCode == http.StatusTooManyRequests {
+			return "", fmt.Errorf("%w: status %d: %s", ErrRetryable, resp.StatusCode, detail)
+		}
+		return "", fmt.Errorf("llm returned status %d: %s", resp.StatusCode, detail)
 	}
 
 	var parsed chatResponse
@@ -186,8 +206,19 @@ func (a *HTTPAnalyzer) call(ctx context.Context, in Input, attempt int) (string,
 		return "", fmt.Errorf("llm returned no choices")
 	}
 
-	return parsed.Choices[0].Message.Content, nil
+	choice := parsed.Choices[0]
+	if choice.FinishReason == finishReasonLength {
+		// 截断属于确定性失败：重试只会得到同样被截断的结果，
+		// 所以直接返回错误，由上层记录为分析失败。
+		return "", fmt.Errorf("%w: output truncated at max_tokens=%d, raise LLM_MAX_TOKENS",
+			ErrTruncated, a.cfg.MaxTokens)
+	}
+
+	return choice.Message.Content, nil
 }
+
+// finishReasonLength 是服务端表示"达到输出上限"的 finish_reason。
+const finishReasonLength = "length"
 
 func truncate(s string, n int) string {
 	if len(s) <= n {

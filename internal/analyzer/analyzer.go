@@ -14,6 +14,17 @@ import (
 // 或解析成功但未通过校验。
 var ErrInvalidResponse = errors.New("invalid analysis response")
 
+// ErrTruncated 表示模型输出达到 max_tokens 上限被截断。
+//
+// 与 ErrInvalidResponse 分开，是因为它不该被重试：截断是确定性的，
+// 重试会得到同样的结果，只会白费两次调用。遇到它应当调高上限。
+var ErrTruncated = errors.New("analysis output truncated")
+
+// ErrRetryable 标记瞬时故障（网络超时、5xx、429），值得退避后重试。
+//
+// 与它相对的是确定性错误（4xx、截断、schema 不符），重试不会改变结果。
+var ErrRetryable = errors.New("retryable upstream error")
+
 // Input 是一次分析所需的输入。
 type Input struct {
 	RawLog     string
