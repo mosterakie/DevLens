@@ -158,6 +158,18 @@ func buildRouter(
 		c.JSON(http.StatusOK, gin.H{"status": "ready"})
 	})
 
+	// 前端是静态文件，没有构建步骤，直接由 api 进程托管。
+	// 这样本地只需启动一个进程就能打开页面。
+	if _, err := os.Stat("web"); err == nil {
+		r.Static("/static", "./web")
+		r.StaticFile("/", "./web/index.html")
+		r.StaticFile("/analyze.html", "./web/analyze.html")
+		r.StaticFile("/incidents.html", "./web/incidents.html")
+		r.StaticFile("/detail.html", "./web/detail.html")
+		r.StaticFile("/app.js", "./web/app.js")
+		r.StaticFile("/style.css", "./web/style.css")
+	}
+
 	return r
 }
 

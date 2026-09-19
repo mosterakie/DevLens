@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DevLens — Understand production errors faster</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header>
+  <span class="logo">DevLens</span>
+  <nav>
+    <a href="index.html" class="active">Home</a>
+    <a href="analyze.html">Analyze</a>
+    <a href="incidents.html">Incidents</a>
+  </nav>
+</header>
+
+<main>
+  <h1>Understand production errors faster.</h1>
+  <p class="lede">
+    Paste a log, get a structured diagnosis, and find incidents that looked like this before.
+  </p>
+
+  <div class="actions">
+    <a class="btn btn-primary" href="analyze.html">Try it</a>
+    <a class="btn" href="incidents.html">Browse incidents</a>
+  </div>
+
+  <div class="cards">
+    <div class="card">
+      <h3>AI Diagnosis</h3>
+      <p>Turns an unstructured log into severity, category, likely causes and evidence.</p>
+    </div>
+    <div class="card">
+      <h3>Related Incidents</h3>
+      <p>Logs are normalized into a fingerprint, so the same failure is recognized even when
+         timestamps, addresses and line numbers change.</p>
+    </div>
+    <div class="card">
+      <h3>Incident History</h3>
+      <p>Every incident keeps its raw log and a status timeline from submission to resolution.</p>
+    </div>
+  </div>
+
+  <h2>Try it with a log like this</h2>
+  <div class="panel">
+    <pre class="mono">2026-09-18 14:32:51
+POST /api/payment
+
+ERROR: context deadline exceeded
+
+stack:
+goroutine 231 [IO wait]:
+database/sql.(*DB).conn(...)
+	/payment/db/db.go:142 +0x1a</pre>
+    <div class="actions">
+      <a class="btn btn-primary" href="analyze.html?sample=1">Load this sample</a>
+    </div>
+  </div>
+</main>
+</body>
+</html>

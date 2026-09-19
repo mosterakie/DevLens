@@ -1,11 +1,11 @@
-﻿# 里程碑
+# 里程碑
 
 | # | 里程碑 | 产出 | 可验证 |
 |---|---|---|---|
-| M0 | 骨架 | 仓库结构、docker-compose、迁移 | `docker compose up` + `migrate up` 成功 |
+| M0 | 骨架 | 仓库结构、docker-compose、迁移 | ✅ 已完成 |
 | M1 | 纯逻辑 | fingerprint + domain（状态机） | ✅ 已完成，`go test ./...` 全绿 |
-| M2 | 同步链路 | POST /analyze、fingerprint 命中同类 | 能看到 `related_incident_ids` |
-| M3 | 异步链路 | worker + LLM 调用 + 写 analysis | 轮询看到 status=OPEN 和诊断 |
+| M2 | 同步链路 | POST /analyze、fingerprint 命中同类 | ✅ 已完成 |
+| M3 | 异步链路 | worker + 分析器 + 写 analysis | ✅ 已完成 |
 | M4 | 前端 4 页 | Landing / Analyze / List / Detail | 能独立走完 Demo |
 | M5 | 加固 | 限流、超时、重试、`/readyz`、`/metrics` | 429 可复现，指标有值 |
 | M6 | 部署 | 公网可访问 | 陌生人 60 秒走完 Demo |

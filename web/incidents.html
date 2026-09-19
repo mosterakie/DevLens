@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Incidents — DevLens</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header>
+  <span class="logo">DevLens</span>
+  <nav>
+    <a href="index.html">Home</a>
+    <a href="analyze.html">Analyze</a>
+    <a href="incidents.html" class="active">Incidents</a>
+  </nav>
+</header>
+
+<main>
+  <h1>Incidents</h1>
+
+  <div class="actions">
+    <select id="status">
+      <option value="">All statuses</option>
+      <option>ANALYZING</option>
+      <option>OPEN</option>
+      <option>INVESTIGATING</option>
+      <option>RESOLVED</option>
+      <option>FAILED</option>
+    </select>
+    <select id="severity">
+      <option value="">All severities</option>
+      <option>CRITICAL</option>
+      <option>HIGH</option>
+      <option>MEDIUM</option>
+      <option>LOW</option>
+    </select>
+    <button id="refresh">Refresh</button>
+  </div>
+
+  <div id="content"></div>
+  <div id="more" class="actions"></div>
+</main>
+
+<script src="app.js"></script>
+<script>
+const contentEl = document.getElementById('content');
+const moreEl = document.getElementById('more');
+const statusSel = document.getElementById('status');
+const severitySel = document.getElementById('severity');
+
+let cursor = null;
+let all = [];
+
+function query() {
+  const p = new URLSearchParams();
+  p.set('limit', '20');
+  if (statusSel.value) p.set('status', statusSel.value);
+  if (severitySel.value) p.set('severity', severitySel.value);
+  if (cursor) p.set('cursor', cursor);
+  return p.toString();
+}
+
+async function load(reset) {
+  if (reset) { cursor = null; all = []; }
+  contentEl.innerHTML = '<div class="panel empty">Loading…</div>';
+  try {
+    const res = await getJSON('/incidents?' + query());
+    all = all.concat(res.items || []);
+    cursor = res.next_cursor || null;
+    render();
+  } catch (err) {
+    showError(contentEl, err.message || 'Failed to load incidents.');
+  }
+}
+
+function render() {
+  if (!all.length) {
+    contentEl.innerHTML = '<div class="panel empty">No incidents yet. Submit a log from the Analyze page.</div>';
+    moreEl.innerHTML = '';
+    return;
+  }
+
+  const table = el('table');
+  const thead = el('thead');
+  const htr = el('tr');
+  ['ID', 'Title', 'Severity', 'Status', 'Category', ''].forEach(h => htr.appendChild(el('th', null, h)));
+  thead.appendChild(htr);
+  table.appendChild(thead);
+
+  const tbody = el('tbody');
+  all.forEach(inc => {
+    const tr = el('tr');
+
+    const idTd = el('td');
+    idTd.appendChild(linkIncident(inc.id));
+    tr.appendChild(idTd);
+
+    tr.appendChild(el('td', null, inc.title || '—'));
+
+    const sevTd = el('td');
+    sevTd.appendChild(severityBadge(inc.severity));
+    tr.appendChild(sevTd);
+
+    const stTd = el('td');
+    stTd.appendChild(statusBadge(inc.status));
+    tr.appendChild(stTd);
+
+    tr.appendChild(el('td', null, inc.category || '—'));
+
+    const flagTd = el('td');
+    if (inc.is_recurring) flagTd.appendChild(recurringBadge());
+    tr.appendChild(flagTd);
+
+    tbody.appendChild(tr);
+  });
+  table.appendChild(tbody);
+
+  contentEl.innerHTML = '';
+  contentEl.appendChild(table);
+
+  moreEl.innerHTML = '';
+  if (cursor) {
+    const btn = el('button', null, 'Load more');
+    btn.onclick = () => load(false);
+    moreEl.appendChild(btn);
+  }
+}
+
+statusSel.onchange = () => load(true);
+severitySel.onchange = () => load(true);
+document.getElementById('refresh').onclick = () => load(true);
+
+load(true);
+</script>
+</body>
+</html>
