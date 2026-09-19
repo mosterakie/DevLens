@@ -1,20 +1,16 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="zh-Hans">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Incident — DevLens</title>
 <link rel="stylesheet" href="style.css">
+<script src="i18n.js"></script>
+<script src="select.js"></script>
+<script src="header.js"></script>
 </head>
 <body>
-<header>
-  <span class="logo">DevLens</span>
-  <nav>
-    <a href="index.html">Home</a>
-    <a href="analyze.html">Analyze</a>
-    <a href="incidents.html" class="active">Incidents</a>
-  </nav>
-</header>
+<header id="site-header"></header>
 
 <main>
   <div id="head"></div>
@@ -23,223 +19,196 @@
 
 <script src="app.js"></script>
 <script>
-const params = new URLSearchParams(location.search);
-const id = Number(params.get('id'));
-const headEl = document.getElementById('head');
-const contentEl = document.getElementById('content');
+(function () {
+  const I = window.DevLensI18n;
+  I.initLang();
+  window.DevLensHeader.build();
 
-if (!id || id <= 0) {
-  showError(contentEl, 'No incident id in the URL.');
-} else {
-  load();
-}
+  const params = new URLSearchParams(location.search);
+  const id = Number(params.get('id'));
+  const headEl = document.getElementById('head');
+  const contentEl = document.getElementById('content');
+  let inc = null;
 
-async function load() {
-  contentEl.innerHTML = '<div class="panel empty">Loading…</div>';
-  try {
-    const inc = await getJSON('/incidents/' + id);
-    render(inc);
-    loadEvents();
-  } catch (err) {
-    showError(contentEl, err.message || 'Failed to load incident.');
-  }
-}
-
-function render(inc) {
-  headEl.innerHTML = '';
-
-  const h1 = el('h1', null, inc.title || ('Incident #' + inc.id));
-  headEl.appendChild(h1);
-
-  const badges = el('div');
-  badges.style.display = 'flex';
-  badges.style.gap = '8px';
-  badges.style.flexWrap = 'wrap';
-  badges.appendChild(severityBadge(inc.severity));
-  badges.appendChild(statusBadge(inc.status));
-  if (inc.is_recurring) badges.appendChild(recurringBadge());
-  if (inc.category) badges.appendChild(el('span', 'badge', inc.category));
-  headEl.appendChild(badges);
-
-  const meta = el('div', 'meta');
-  meta.style.marginTop = '12px';
-  meta.textContent = 'Incident #' + inc.id + ' · created ' + formatTime(inc.created_at);
-  headEl.appendChild(meta);
-
-  contentEl.innerHTML = '';
-
-  // 状态操作。只展示当前状态允许的下一步，让非法转移在界面上不可达。
-  const next = {
-    ANALYZING: [],
-    OPEN: ['INVESTIGATING'],
-    INVESTIGATING: ['RESOLVED'],
-    RESOLVED: [],
-    FAILED: [],
-  }[inc.status] || [];
-
-  if (next.length) {
-    contentEl.appendChild(el('h3', null, 'Move to'));
-    const actions = el('div', 'actions');
-    next.forEach(s => {
-      const btn = el('button', null, s);
-      btn.onclick = async () => {
-        btn.disabled = true;
-        try {
-          await patchJSON('/incidents/' + id + '/status', { status: s });
-          load();
-        } catch (err) {
-          btn.disabled = false;
-          alert(err.message || 'Status change failed.');
-        }
-      };
-      actions.appendChild(btn);
-    });
-    contentEl.appendChild(actions);
-  }
-
-  // AI 分析
-  contentEl.appendChild(el('h3', null, 'AI analysis'));
-  if (!inc.analysis) {
-    const wrap = el('div', 'panel empty');
-    if (inc.status === 'FAILED') {
-      wrap.textContent = 'Analysis failed. The raw log is preserved and the incident can be retried.';
-    } else {
-      wrap.appendChild(el('span', 'spinner'));
-      wrap.appendChild(document.createTextNode('Analyzing…'));
-      // 分析尚未完成时继续轮询，让详情页能反映最新状态。
-      setTimeout(load, 1500);
-    }
-    contentEl.appendChild(wrap);
+  if (!id || id <= 0) {
+    showError(contentEl, I.t('detail.notfound'));
   } else {
-    const a = inc.analysis;
-    const panel = el('div', 'panel');
+    load();
+  }
 
-    panel.appendChild(el('p', null, a.summary));
-
-    if (a.possible_causes && a.possible_causes.length) {
-      panel.appendChild(el('h3', null, 'Possible causes'));
-      const ul = el('ul', 'plain');
-      a.possible_causes.forEach(c => ul.appendChild(el('li', null, c)));
-      panel.appendChild(ul);
+  async function load() {
+    contentEl.innerHTML = '';
+    contentEl.appendChild(el('div', 'panel empty', I.t('detail.loading')));
+    try {
+      inc = await getJSON('/incidents/' + id);
+      render();
+      loadEvents();
+    } catch (err) {
+      showError(contentEl, err.message || I.t('analyze.failed'));
     }
+  }
 
-    if (a.evidence && a.evidence.length) {
-      panel.appendChild(el('h3', null, 'Evidence'));
-      a.evidence.forEach(e => {
-        const box = el('div', 'evidence');
-        box.appendChild(el('div', 'mono', e.key + ': ' + e.value));
-        box.appendChild(el('div', 'line', 'line ' + e.source_line));
-        panel.appendChild(box);
+  function render() {
+    if (!inc) return;
+
+    headEl.innerHTML = '';
+    const h1 = el('h1', null, inc.title || (I.t('detail.incident') + ' #' + inc.id));
+    headEl.appendChild(h1);
+
+    const badges = el('div');
+    badges.style.display = 'flex';
+    badges.style.gap = '8px';
+    badges.style.flexWrap = 'wrap';
+    badges.appendChild(severityBadge(inc.severity));
+    badges.appendChild(statusBadge(inc.status));
+    if (inc.is_recurring) badges.appendChild(recurringBadge());
+    if (inc.category) badges.appendChild(el('span', 'badge', inc.category));
+    headEl.appendChild(badges);
+
+    const meta = el('div', 'meta');
+    meta.style.marginTop = '12px';
+    meta.textContent = I.t('detail.incident') + ' #' + inc.id +
+      ' · ' + I.t('detail.created') + ' ' + formatTime(inc.created_at);
+    headEl.appendChild(meta);
+
+    contentEl.innerHTML = '';
+
+    // 状态按钮只展示当前状态允许的下一步，非法转移在界面上不可达。
+    const next = {
+      ANALYZING: [],
+      OPEN: ['INVESTIGATING'],
+      INVESTIGATING: ['RESOLVED'],
+      RESOLVED: [],
+      FAILED: [],
+    }[inc.status] || [];
+
+    if (next.length) {
+      contentEl.appendChild(el('h3', null, I.t('detail.move')));
+      const actions = el('div', 'actions');
+      next.forEach(s => {
+        const btn = el('button', null, s);
+        btn.onclick = async () => {
+          btn.disabled = true;
+          try {
+            await patchJSON('/incidents/' + id + '/status', { status: s });
+            load();
+          } catch (err) {
+            btn.disabled = false;
+            alert(err.message || I.t('detail.statuschange'));
+          }
+        };
+        actions.appendChild(btn);
       });
+      contentEl.appendChild(actions);
     }
 
-    if (a.suggested_actions && a.suggested_actions.length) {
-      panel.appendChild(el('h3', null, 'Suggested investigation'));
+    contentEl.appendChild(el('h3', null, I.t('detail.ai')));
+    if (!inc.analysis) {
+      const panel = el('div', 'panel empty');
+      if (inc.status === 'FAILED') {
+        panel.textContent = I.t('result.failed.note');
+      } else {
+        panel.appendChild(el('span', 'spinner'));
+        panel.appendChild(document.createTextNode(I.t('analyze.analyzing') + '…'));
+        // 分析未完成时继续轮询。
+        setTimeout(load, 1500);
+      }
+      contentEl.appendChild(panel);
+    } else {
+      const panel = el('div', 'panel');
+      renderAnalysis(panel, inc.analysis);
+      contentEl.appendChild(panel);
+    }
+
+    contentEl.appendChild(el('h3', null, I.t('detail.rawlog')));
+    const prePanel = el('div', 'panel');
+    const code = el('pre', 'mono', inc.raw_log);
+    code.style.whiteSpace = 'pre-wrap';
+    code.style.margin = '0';
+    prePanel.appendChild(code);
+    contentEl.appendChild(prePanel);
+
+    contentEl.appendChild(el('h3', null, I.t('detail.related')));
+    const relatedBox = el('div', 'panel empty', I.t('detail.loading'));
+    relatedBox.id = 'related';
+    contentEl.appendChild(relatedBox);
+    loadRelated();
+  }
+
+  async function loadRelated() {
+    const box = document.getElementById('related');
+    if (!box) return;
+    try {
+      const res = await getJSON('/incidents/' + id + '/related');
+      const items = res.items || [];
+      if (!items.length) {
+        box.className = 'panel empty';
+        box.textContent = I.t('result.norelated');
+        return;
+      }
+      box.className = 'panel';
+      box.innerHTML = '';
       const ul = el('ul', 'plain');
-      a.suggested_actions.forEach(s => ul.appendChild(el('li', null, s)));
-      panel.appendChild(ul);
-    }
-
-    panel.appendChild(el('h3', null, 'Confidence'));
-    const conf = el('div', 'confidence');
-    const bar = el('div', 'bar');
-    const fill = el('span');
-    fill.style.width = Math.round(a.confidence * 100) + '%';
-    bar.appendChild(fill);
-    conf.appendChild(bar);
-    conf.appendChild(el('span', null, a.confidence.toFixed(2) + ' · ' + a.model + ' · ' + a.prompt_version));
-    panel.appendChild(conf);
-
-    contentEl.appendChild(panel);
-  }
-
-  // 原始日志
-  contentEl.appendChild(el('h3', null, 'Original log'));
-  const pre = el('div', 'panel');
-  const code = el('pre', 'mono', inc.raw_log);
-  code.style.whiteSpace = 'pre-wrap';
-  code.style.margin = '0';
-  pre.appendChild(code);
-  contentEl.appendChild(pre);
-
-  // 同类问题
-  contentEl.appendChild(el('h3', null, 'Related incidents'));
-  const relatedBox = el('div', 'panel');
-  relatedBox.id = 'related';
-  relatedBox.className = 'panel empty';
-  relatedBox.textContent = 'Loading…';
-  contentEl.appendChild(relatedBox);
-  loadRelated();
-}
-
-async function loadRelated() {
-  const box = document.getElementById('related');
-  if (!box) return;
-  try {
-    // 后端按 fingerprint 匹配，所以判定的是"本质相同的错误"，
-    // 而不是"分类相同的错误"。
-    const res = await getJSON('/incidents/' + id + '/related');
-    const items = res.items || [];
-    if (!items.length) {
+      items.forEach(o => {
+        const li = el('li');
+        li.appendChild(linkIncident(o.id));
+        li.appendChild(document.createTextNode(' ' + (o.title || '')));
+        if (o.severity) li.appendChild(document.createTextNode(' · ' + o.severity));
+        if (o.status) li.appendChild(document.createTextNode(' · ' + o.status));
+        ul.appendChild(li);
+      });
+      box.appendChild(ul);
+    } catch (err) {
       box.className = 'panel empty';
-      box.textContent = 'No earlier incident shares this fingerprint.';
-      return;
+      box.textContent = I.t('result.relatedfailed');
     }
-    box.className = 'panel';
-    box.innerHTML = '';
-    const ul = el('ul', 'plain');
-    items.forEach(o => {
-      const li = el('li');
-      li.appendChild(linkIncident(o.id));
-      li.appendChild(document.createTextNode(' ' + (o.title || '')));
-      if (o.severity) li.appendChild(document.createTextNode(' · ' + o.severity));
-      if (o.status) li.appendChild(document.createTextNode(' · ' + o.status));
-      ul.appendChild(li);
-    });
-    box.appendChild(ul);
-  } catch (err) {
-    box.className = 'panel empty';
-    box.textContent = 'Could not load related incidents.';
   }
-}
 
-async function loadEvents() {
-  try {
-    const res = await getJSON('/incidents/' + id + '/events');
-    const items = res.items || [];
-    if (!items.length) return;
+  async function loadEvents() {
+    try {
+      const res = await getJSON('/incidents/' + id + '/events');
+      const items = res.items || [];
+      if (!items.length) return;
 
-    const h = el('h3', null, 'Timeline');
-    const ul = el('ul', 'timeline');
-    items.forEach(e => {
-      const li = el('li');
-      li.appendChild(el('div', null, describeEvent(e)));
-      li.appendChild(el('div', 'when', formatTime(e.created_at)));
-      ul.appendChild(li);
-    });
+      const old = document.getElementById('timeline-block');
+      if (old) old.remove();
 
-    // 插在原始日志之后，避免打乱阅读顺序。
-    contentEl.appendChild(h);
-    contentEl.appendChild(ul);
-  } catch (_) {
-    // 时间线取不到不影响主要内容。
+      const block = el('div');
+      block.id = 'timeline-block';
+      block.appendChild(el('h3', null, I.t('detail.timeline')));
+
+      const ul = el('ul', 'timeline');
+      items.forEach(e => {
+        const li = el('li');
+        li.appendChild(el('div', null, describeEvent(e)));
+        li.appendChild(el('div', 'when', formatTime(e.created_at)));
+        ul.appendChild(li);
+      });
+      block.appendChild(ul);
+      contentEl.appendChild(block);
+    } catch (_) {
+      // 时间线取不到不影响主要内容。
+    }
   }
-}
 
-function describeEvent(e) {
-  switch (e.event_type) {
-    case 'created':
-      return 'Incident created';
-    case 'analysis_completed':
-      return 'AI analysis completed';
-    case 'analysis_failed':
-      return 'AI analysis failed';
-    case 'status_changed':
-      return 'Status changed: ' + (e.from_status || '?') + ' → ' + (e.to_status || '?');
-    default:
-      return e.event_type;
+  function describeEvent(e) {
+    switch (e.event_type) {
+      case 'created': return I.t('detail.event.created');
+      case 'analysis_completed': return I.t('detail.event.analysis_done');
+      case 'analysis_failed': return I.t('detail.event.analysis_failed');
+      case 'status_changed':
+        return I.t('detail.event.status', { from: e.from_status || '?', to: e.to_status || '?' });
+      default: return e.event_type;
+    }
   }
-}
+
+  onLangChange(() => {
+    document.title = I.t('detail.incident') + ' — DevLens';
+    if (!inc) return;
+    render();
+    loadEvents();
+  });
+})();
 </script>
 </body>
 </html>

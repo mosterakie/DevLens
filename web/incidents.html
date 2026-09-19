@@ -1,41 +1,24 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="zh-Hans">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Incidents — DevLens</title>
 <link rel="stylesheet" href="style.css">
+<script src="i18n.js"></script>
+<script src="select.js"></script>
+<script src="header.js"></script>
 </head>
 <body>
-<header>
-  <span class="logo">DevLens</span>
-  <nav>
-    <a href="index.html">Home</a>
-    <a href="analyze.html">Analyze</a>
-    <a href="incidents.html" class="active">Incidents</a>
-  </nav>
-</header>
+<header id="site-header"></header>
 
 <main>
-  <h1>Incidents</h1>
+  <h1 data-i18n="list.title"></h1>
 
   <div class="actions">
-    <select id="status">
-      <option value="">All statuses</option>
-      <option>ANALYZING</option>
-      <option>OPEN</option>
-      <option>INVESTIGATING</option>
-      <option>RESOLVED</option>
-      <option>FAILED</option>
-    </select>
-    <select id="severity">
-      <option value="">All severities</option>
-      <option>CRITICAL</option>
-      <option>HIGH</option>
-      <option>MEDIUM</option>
-      <option>LOW</option>
-    </select>
-    <button id="refresh">Refresh</button>
+    <span id="status-filter"></span>
+    <span id="severity-filter"></span>
+    <button id="refresh" data-i18n="list.refresh"></button>
   </div>
 
   <div id="content"></div>
@@ -44,94 +27,140 @@
 
 <script src="app.js"></script>
 <script>
-const contentEl = document.getElementById('content');
-const moreEl = document.getElementById('more');
-const statusSel = document.getElementById('status');
-const severitySel = document.getElementById('severity');
+(function () {
+  const I = window.DevLensI18n;
+  I.initLang();
+  window.DevLensHeader.build();
 
-let cursor = null;
-let all = [];
+  const contentEl = document.getElementById('content');
+  const moreEl = document.getElementById('more');
 
-function query() {
-  const p = new URLSearchParams();
-  p.set('limit', '20');
-  if (statusSel.value) p.set('status', statusSel.value);
-  if (severitySel.value) p.set('severity', severitySel.value);
-  if (cursor) p.set('cursor', cursor);
-  return p.toString();
-}
+  // 状态与严重程度的取值是后端枚举，不随语言变化，
+  // 只有"全部"这一项的文案需要翻译。
+  const STATUSES = ['ANALYZING', 'OPEN', 'INVESTIGATING', 'RESOLVED', 'FAILED'];
+  const SEVERITIES = ['CRITICAL', 'HIGH', 'MEDIUM', 'LOW'];
 
-async function load(reset) {
-  if (reset) { cursor = null; all = []; }
-  contentEl.innerHTML = '<div class="panel empty">Loading…</div>';
-  try {
-    const res = await getJSON('/incidents?' + query());
-    all = all.concat(res.items || []);
-    cursor = res.next_cursor || null;
-    render();
-  } catch (err) {
-    showError(contentEl, err.message || 'Failed to load incidents.');
+  let statusValue = '';
+  let severityValue = '';
+  let cursor = null;
+  let all = [];
+
+  function statusOptions() {
+    return [{ value: '', label: I.t('list.status') }]
+      .concat(STATUSES.map(s => ({ value: s, label: s })));
   }
-}
-
-function render() {
-  if (!all.length) {
-    contentEl.innerHTML = '<div class="panel empty">No incidents yet. Submit a log from the Analyze page.</div>';
-    moreEl.innerHTML = '';
-    return;
+  function severityOptions() {
+    return [{ value: '', label: I.t('list.severity') }]
+      .concat(SEVERITIES.map(s => ({ value: s, label: s })));
   }
 
-  const table = el('table');
-  const thead = el('thead');
-  const htr = el('tr');
-  ['ID', 'Title', 'Severity', 'Status', 'Category', ''].forEach(h => htr.appendChild(el('th', null, h)));
-  thead.appendChild(htr);
-  table.appendChild(thead);
-
-  const tbody = el('tbody');
-  all.forEach(inc => {
-    const tr = el('tr');
-
-    const idTd = el('td');
-    idTd.appendChild(linkIncident(inc.id));
-    tr.appendChild(idTd);
-
-    tr.appendChild(el('td', null, inc.title || '—'));
-
-    const sevTd = el('td');
-    sevTd.appendChild(severityBadge(inc.severity));
-    tr.appendChild(sevTd);
-
-    const stTd = el('td');
-    stTd.appendChild(statusBadge(inc.status));
-    tr.appendChild(stTd);
-
-    tr.appendChild(el('td', null, inc.category || '—'));
-
-    const flagTd = el('td');
-    if (inc.is_recurring) flagTd.appendChild(recurringBadge());
-    tr.appendChild(flagTd);
-
-    tbody.appendChild(tr);
+  const statusSelect = window.DevLensSelect.create({
+    mount: document.getElementById('status-filter'),
+    value: '',
+    options: statusOptions(),
+    ariaLabel: I.t('list.status'),
+    onChange: (v) => { statusValue = v; load(true); },
   });
-  table.appendChild(tbody);
 
-  contentEl.innerHTML = '';
-  contentEl.appendChild(table);
+  const severitySelect = window.DevLensSelect.create({
+    mount: document.getElementById('severity-filter'),
+    value: '',
+    options: severityOptions(),
+    ariaLabel: I.t('list.severity'),
+    onChange: (v) => { severityValue = v; load(true); },
+  });
 
-  moreEl.innerHTML = '';
-  if (cursor) {
-    const btn = el('button', null, 'Load more');
-    btn.onclick = () => load(false);
-    moreEl.appendChild(btn);
+  function query() {
+    const p = new URLSearchParams();
+    p.set('limit', '20');
+    if (statusValue) p.set('status', statusValue);
+    if (severityValue) p.set('severity', severityValue);
+    if (cursor) p.set('cursor', cursor);
+    return p.toString();
   }
-}
 
-statusSel.onchange = () => load(true);
-severitySel.onchange = () => load(true);
-document.getElementById('refresh').onclick = () => load(true);
+  async function load(reset) {
+    if (reset) { cursor = null; all = []; }
+    contentEl.innerHTML = '';
+    contentEl.appendChild(el('div', 'panel empty', I.t('list.loading')));
+    try {
+      const res = await getJSON('/incidents?' + query());
+      all = all.concat(res.items || []);
+      cursor = res.next_cursor || null;
+      render();
+    } catch (err) {
+      showError(contentEl, err.message || I.t('list.failed'));
+    }
+  }
 
-load(true);
+  function render() {
+    if (!all.length) {
+      contentEl.innerHTML = '';
+      contentEl.appendChild(el('div', 'panel empty', I.t('list.empty')));
+      moreEl.innerHTML = '';
+      return;
+    }
+
+    const table = el('table');
+    const thead = el('thead');
+    const htr = el('tr');
+    [
+      I.t('list.col.id'), I.t('list.col.title'), I.t('list.col.severity'),
+      I.t('list.col.status'), I.t('list.col.category'), '',
+    ].forEach(h => htr.appendChild(el('th', null, h)));
+    thead.appendChild(htr);
+    table.appendChild(thead);
+
+    const tbody = el('tbody');
+    all.forEach(inc => {
+      const tr = el('tr');
+
+      const idTd = el('td');
+      idTd.appendChild(linkIncident(inc.id));
+      tr.appendChild(idTd);
+
+      tr.appendChild(el('td', null, inc.title || '—'));
+
+      const sevTd = el('td');
+      sevTd.appendChild(severityBadge(inc.severity));
+      tr.appendChild(sevTd);
+
+      const stTd = el('td');
+      stTd.appendChild(statusBadge(inc.status));
+      tr.appendChild(stTd);
+
+      tr.appendChild(el('td', null, inc.category || '—'));
+
+      const flagTd = el('td');
+      if (inc.is_recurring) flagTd.appendChild(recurringBadge());
+      tr.appendChild(flagTd);
+
+      tbody.appendChild(tr);
+    });
+    table.appendChild(tbody);
+
+    contentEl.innerHTML = '';
+    contentEl.appendChild(table);
+
+    moreEl.innerHTML = '';
+    if (cursor) {
+      const btn = el('button', null, I.t('list.more'));
+      btn.onclick = () => load(false);
+      moreEl.appendChild(btn);
+    }
+  }
+
+  document.getElementById('refresh').onclick = () => load(true);
+
+  onLangChange(() => {
+    document.title = I.t('list.title') + ' — DevLens';
+    statusSelect.setOptions(statusOptions());
+    severitySelect.setOptions(severityOptions());
+    render();
+  });
+
+  load(true);
+})();
 </script>
 </body>
 </html>

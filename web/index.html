@@ -1,63 +1,67 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="zh-Hans">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>DevLens — Understand production errors faster</title>
+<title>DevLens</title>
 <link rel="stylesheet" href="style.css">
+<script src="i18n.js"></script>
+<script src="select.js"></script>
+<script src="header.js"></script>
 </head>
 <body>
-<header>
-  <span class="logo">DevLens</span>
-  <nav>
-    <a href="index.html" class="active">Home</a>
-    <a href="analyze.html">Analyze</a>
-    <a href="incidents.html">Incidents</a>
-  </nav>
-</header>
+<header id="site-header"></header>
 
 <main>
-  <h1>Understand production errors faster.</h1>
-  <p class="lede">
-    Paste a log, get a structured diagnosis, and find incidents that looked like this before.
-  </p>
+  <h1 data-i18n="landing.title"></h1>
+  <p class="lede" data-i18n="landing.lede"></p>
 
   <div class="actions">
-    <a class="btn btn-primary" href="analyze.html">Try it</a>
-    <a class="btn" href="incidents.html">Browse incidents</a>
+    <a class="btn btn-primary" href="analyze.html" data-i18n="landing.cta.analyze"></a>
+    <a class="btn" href="incidents.html" data-i18n="landing.cta.browse"></a>
   </div>
 
   <div class="cards">
     <div class="card">
-      <h3>AI Diagnosis</h3>
-      <p>Turns an unstructured log into severity, category, likely causes and evidence.</p>
+      <h3 data-i18n="landing.card.diagnosis.title"></h3>
+      <p data-i18n="landing.card.diagnosis.body"></p>
     </div>
     <div class="card">
-      <h3>Related Incidents</h3>
-      <p>Logs are normalized into a fingerprint, so the same failure is recognized even when
-         timestamps, addresses and line numbers change.</p>
+      <h3 data-i18n="landing.card.related.title"></h3>
+      <p data-i18n="landing.card.related.body"></p>
     </div>
     <div class="card">
-      <h3>Incident History</h3>
-      <p>Every incident keeps its raw log and a status timeline from submission to resolution.</p>
+      <h3 data-i18n="landing.card.history.title"></h3>
+      <p data-i18n="landing.card.history.body"></p>
     </div>
   </div>
 
-  <h2>Try it with a log like this</h2>
+  <h2 data-i18n="landing.sample.title"></h2>
   <div class="panel">
-    <pre class="mono">2026-09-18 14:32:51
-POST /api/payment
-
-ERROR: context deadline exceeded
-
-stack:
-goroutine 231 [IO wait]:
-database/sql.(*DB).conn(...)
-	/payment/db/db.go:142 +0x1a</pre>
+    <pre class="mono" id="sample-log"></pre>
     <div class="actions">
-      <a class="btn btn-primary" href="analyze.html?sample=1">Load this sample</a>
+      <a class="btn btn-primary" id="sample-link" data-i18n="landing.sample.load"></a>
     </div>
   </div>
 </main>
+
+<script>
+(function () {
+  const I = window.DevLensI18n;
+  I.initLang();
+  window.DevLensHeader.build();
+
+  document.getElementById('sample-log').textContent =
+    '2026-09-18 14:32:51\n' +
+    'POST /api/payment\n\n' +
+    'ERROR: context deadline exceeded\n\n' +
+    'stack:\n' +
+    'goroutine 231 [IO wait]:\n' +
+    'database/sql.(*DB).conn(...)\n' +
+    '\t/payment/db/db.go:142 +0x1a';
+
+  document.getElementById('sample-link').href = 'analyze.html?sample=1';
+})();
+</script>
 </body>
 </html>

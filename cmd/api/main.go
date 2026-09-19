@@ -181,19 +181,47 @@ func buildRouter(
 		c.JSON(http.StatusOK, gin.H{"status": "ready"})
 	})
 
-	// 前端是静态文件，没有构建步骤，直接由 api 进程托管。
-	// 这样本地只需启动一个进程就能打开页面。
-	if _, err := os.Stat("web"); err == nil {
-		r.Static("/static", "./web")
-		r.StaticFile("/", "./web/index.html")
-		r.StaticFile("/analyze.html", "./web/analyze.html")
-		r.StaticFile("/incidents.html", "./web/incidents.html")
-		r.StaticFile("/detail.html", "./web/detail.html")
-		r.StaticFile("/app.js", "./web/app.js")
-		r.StaticFile("/style.css", "./web/style.css")
-	}
+	mountWeb(r)
 
 	return r
+}
+
+// webFiles 是允许直接访问的前端文件。
+//
+// 用白名单而不是把整个目录挂到根路径：web 目录里不该有任何
+// 需要保密的文件，但显式列出能避免以后误把源文件或配置暴露出去。
+var webFiles = []string{
+	"index.html",
+	"analyze.html",
+	"incidents.html",
+	"detail.html",
+	"app.js",
+	"i18n.js",
+	"select.js",
+	"header.js",
+	"style.css",
+}
+
+// mountWeb 注册前端静态资源。web 目录不存在时跳过，
+// 便于只跑 API 的场景（例如跑集成测试）。
+func mountWeb(r *gin.Engine) {
+	if _, err := os.Stat("web"); err != nil {
+		return
+	}
+
+	serve := func(file string) gin.HandlerFunc {
+		return func(c *gin.Context) { c.File("./web/" + file) }
+	}
+
+	// 根路径返回首页。
+	r.GET("/", serve("index.html"))
+	r.HEAD("/", serve("index.html"))
+
+	for _, f := range webFiles {
+		file := f
+		r.GET("/"+file, serve(file))
+		r.HEAD("/"+file, serve(file))
+	}
 }
 
 func newLogger() *slog.Logger {

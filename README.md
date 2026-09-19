@@ -94,10 +94,18 @@ curl http://127.0.0.1:8080/api/v1/incidents/1
 ## 开发
 
 ```bash
-go test ./...        # 单元测试
+go test ./...              # 单元测试
 go vet ./...
 gofmt -l .
+node scripts/check-i18n.js # 界面词条完整性
 ```
+
+界面支持中英双语，默认跟随浏览器，可在页头切换。诊断内容也会用同一种
+语言生成：提交时的语言记入 `incidents.lang`，worker 读取它来构造提示词。
+
+`scripts/check-i18n.js` 校验两份词条的 key 集合一致、中文没有未翻译的
+英文残留、没有空词条。漏翻不会报错，只会让界面上显示词条的 key，
+所以单独做成可执行的检查。
 
 `-race` 需要 gcc，没装的话在 CI 里跑。
 

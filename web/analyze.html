@@ -1,269 +1,248 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="zh-Hans">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Analyze — DevLens</title>
 <link rel="stylesheet" href="style.css">
+<script src="i18n.js"></script>
+<script src="select.js"></script>
+<script src="header.js"></script>
 </head>
 <body>
-<header>
-  <span class="logo">DevLens</span>
-  <nav>
-    <a href="index.html">Home</a>
-    <a href="analyze.html" class="active">Analyze</a>
-    <a href="incidents.html">Incidents</a>
-  </nav>
-</header>
+<header id="site-header"></header>
 
 <main>
-  <h1>Analyze a log</h1>
+  <h1 data-i18n="analyze.title"></h1>
 
   <div class="split">
     <section>
-      <h3>Error log</h3>
-      <textarea id="log" placeholder="Paste your log here..."></textarea>
+      <h3 data-i18n="analyze.log"></h3>
+      <textarea id="log" data-i18n-placeholder="analyze.placeholder"></textarea>
       <div class="actions">
-        <button id="submit" class="btn-primary">Analyze</button>
-        <button id="sample">Load sample</button>
-        <button id="clear">Clear</button>
+        <button id="submit" class="btn-primary" data-i18n="analyze.submit"></button>
+        <button id="sample" data-i18n="analyze.sample"></button>
+        <button id="clear" data-i18n="analyze.clear"></button>
       </div>
       <div id="input-error"></div>
     </section>
 
     <section>
-      <h3>Analysis</h3>
-      <div id="result" class="panel empty">Submit a log to see the diagnosis.</div>
+      <h3 data-i18n="analyze.result"></h3>
+      <div id="result" class="panel empty" data-i18n="analyze.empty"></div>
     </section>
   </div>
 </main>
 
 <script src="app.js"></script>
 <script>
-const SAMPLE = `2026-09-18 14:32:51
-POST /api/payment
+(function () {
+  const I = window.DevLensI18n;
+  I.initLang();
+  window.DevLensHeader.build();
 
-ERROR:
-context deadline exceeded
+  const SAMPLE = [
+    '2026-09-18 14:32:51',
+    'POST /api/payment',
+    '',
+    'ERROR:',
+    'context deadline exceeded',
+    '',
+    'stack:',
+    'goroutine 231 [IO wait]:',
+    'database/sql.(*DB).conn(...)',
+    '\t/payment/db/db.go:142 +0x1a',
+    '\t/payment/handler/pay.go:88 +0x2b',
+    'context deadline exceeded while waiting for database connection',
+    'active connections: 20',
+    'pool size: 20',
+  ].join('\n');
 
-stack:
-goroutine 231 [IO wait]:
-database/sql.(*DB).conn(...)
-	/payment/db/db.go:142 +0x1a
-	/payment/handler/pay.go:88 +0x2b
-context deadline exceeded while waiting for database connection
-active connections: 20
-pool size: 20`;
+  const logEl = document.getElementById('log');
+  const resultEl = document.getElementById('result');
+  const inputErrorEl = document.getElementById('input-error');
+  const submitBtn = document.getElementById('submit');
 
-const logEl = document.getElementById('log');
-const resultEl = document.getElementById('result');
-const inputErrorEl = document.getElementById('input-error');
-const submitBtn = document.getElementById('submit');
+  const params = new URLSearchParams(location.search);
+  if (params.get('sample') === '1') logEl.value = SAMPLE;
 
-let pollTimer = null;
-
-// 从 URL 读参数：支持 ?sample=1 预填，?id=123 直接展示已有结果。
-const params = new URLSearchParams(location.search);
-if (params.get('sample') === '1') logEl.value = SAMPLE;
-
-document.getElementById('sample').onclick = () => { logEl.value = SAMPLE; };
-document.getElementById('clear').onclick = () => {
-  logEl.value = '';
-  stopPolling();
-  inputErrorEl.innerHTML = '';
-  resultEl.className = 'panel empty';
-  resultEl.textContent = 'Submit a log to see the diagnosis.';
-  history.replaceState(null, '', 'analyze.html');
-};
-
-submitBtn.onclick = async () => {
-  const log = logEl.value;
-  inputErrorEl.innerHTML = '';
-
-  if (log.trim().length === 0) {
-    showError(inputErrorEl, 'Paste a log first.');
-    return;
-  }
-
-  stopPolling();
-  submitBtn.disabled = true;
-  resultEl.className = 'panel';
-  resultEl.innerHTML = '';
-  const pending = el('div', null, '');
-  pending.appendChild(el('span', 'spinner'));
-  pending.appendChild(document.createTextNode('Analyzing…'));
-  resultEl.appendChild(pending);
-
-  try {
-    const res = await postJSON('/incidents/analyze', { log });
-    // 提交成功后把 id 写进 URL，结果页就可以分享和刷新。
-    history.replaceState(null, '', 'analyze.html?id=' + res.id);
-    renderIncident(res.id, res);
-    startPolling(res.id);
-  } catch (err) {
-    submitBtn.disabled = false;
-    showError(resultEl, errorText(err));
-  }
-};
-
-function errorText(err) {
-  if (err.code === 'INVALID_LOG') return 'Log rejected: ' + err.message;
-  if (err.code === 'RATE_LIMITED') return 'Too many requests. Wait a moment and try again.';
-  return err.message || 'Request failed.';
-}
-
-function startPolling(id) {
+  let pollTimer = null;
+  let currentId = null;
+  let currentData = null;
   let elapsed = 0;
-  const tick = async () => {
-    elapsed += 1;
+
+  document.getElementById('sample').onclick = () => { logEl.value = SAMPLE; };
+
+  document.getElementById('clear').onclick = () => {
+    logEl.value = '';
+    stopPolling();
+    currentId = null;
+    currentData = null;
+    inputErrorEl.innerHTML = '';
+    resultEl.className = 'panel empty';
+    resultEl.textContent = I.t('analyze.empty');
+    history.replaceState(null, '', 'analyze.html');
+  };
+
+  submitBtn.onclick = async () => {
+    const log = logEl.value;
+    inputErrorEl.innerHTML = '';
+
+    if (log.trim().length === 0) {
+      showError(inputErrorEl, I.t('analyze.needlog'));
+      return;
+    }
+
+    stopPolling();
+    submitBtn.disabled = true;
+    resultEl.className = 'panel';
+    resultEl.innerHTML = '';
+    resultEl.appendChild(spinnerLine(I.t('analyze.analyzing') + '…'));
+
     try {
-      const inc = await getJSON('/incidents/' + id);
-      if (inc.analysis) {
-        stopPolling();
-        submitBtn.disabled = false;
-        renderIncident(id, inc);
-        return;
-      }
-      if (inc.status === 'FAILED') {
-        stopPolling();
-        submitBtn.disabled = false;
-        renderIncident(id, inc);
-        return;
-      }
-      if (elapsed >= 60) {
-        stopPolling();
-        submitBtn.disabled = false;
-        // 超时不当作错误，结果可能仍然会出来，给一个可点击的链接。
-        resultEl.innerHTML = '';
-        resultEl.appendChild(el('div', 'alert info', 'Still analyzing. Refresh this page in a moment.'));
-        resultEl.appendChild(linkIncident(id, 'Check incident #' + id));
-        return;
-      }
-      const line = resultEl.querySelector('.poll-status');
-      if (line) line.textContent = 'Analyzing… ' + elapsed + 's';
+      // 把界面语言一并传过去，让诊断内容与界面语言一致。
+      const res = await postJSON('/incidents/analyze?lang=' + encodeURIComponent(I.apiLang()), { log });
+      history.replaceState(null, '', 'analyze.html?id=' + res.id);
+      currentId = res.id;
+      currentData = null;
+      render();
+      startPolling(res.id);
     } catch (err) {
-      stopPolling();
       submitBtn.disabled = false;
       showError(resultEl, errorText(err));
     }
   };
-  tick();
-  pollTimer = setInterval(tick, 1000);
-}
 
-function stopPolling() {
-  if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
-}
-
-function renderIncident(id, data) {
-  resultEl.className = 'panel';
-  resultEl.innerHTML = '';
-
-  // 头部：id、严重程度、状态、是否重复出现
-  const head = el('div');
-  const title = el('div', null, data.title || ('Incident #' + id));
-  title.style.fontSize = '18px';
-  title.style.fontWeight = '600';
-  title.style.marginBottom = '8px';
-  head.appendChild(title);
-
-  const badges = el('div');
-  badges.style.display = 'flex';
-  badges.style.gap = '8px';
-  badges.style.flexWrap = 'wrap';
-  badges.appendChild(severityBadge(data.severity));
-  badges.appendChild(statusBadge(data.status));
-  if (data.is_recurring) badges.appendChild(recurringBadge());
-  if (data.category) badges.appendChild(el('span', 'badge', data.category));
-  head.appendChild(badges);
-  resultEl.appendChild(head);
-
-  const meta = el('div', 'meta');
-  meta.style.marginTop = '10px';
-  meta.appendChild(linkIncident(id, 'View incident #' + id));
-  meta.appendChild(document.createTextNode(' · ' + formatTime(data.created_at)));
-  resultEl.appendChild(meta);
-
-  if (data.status === 'FAILED') {
-    resultEl.appendChild(el('div', 'alert error',
-      'Analysis failed. The raw log is still stored and can be retried.'));
+  function errorText(err) {
+    if (err.code === 'INVALID_LOG') return I.t('analyze.rejected') + err.message;
+    if (err.code === 'RATE_LIMITED') return I.t('analyze.ratelimited');
+    return err.message || I.t('analyze.failed');
   }
 
-  if (!data.analysis) {
-    const waiting = el('div', 'poll-status', 'Analyzing…');
-    const wrap = el('div');
-    wrap.appendChild(el('span', 'spinner'));
-    wrap.appendChild(waiting);
-    resultEl.appendChild(wrap);
-    return;
+  function startPolling(id) {
+    elapsed = 0;
+    const tick = async () => {
+      elapsed += 1;
+      try {
+        const inc = await getJSON('/incidents/' + id);
+        currentData = inc;
+        if (inc.analysis || inc.status === 'FAILED') {
+          stopPolling();
+          submitBtn.disabled = false;
+          render();
+          return;
+        }
+        if (elapsed >= 60) {
+          stopPolling();
+          submitBtn.disabled = false;
+          render();
+          return;
+        }
+        render();
+      } catch (err) {
+        stopPolling();
+        submitBtn.disabled = false;
+        showError(resultEl, errorText(err));
+      }
+    };
+    tick();
+    pollTimer = setInterval(tick, 1000);
   }
 
-  const a = data.analysis;
-
-  resultEl.appendChild(el('h3', null, 'Summary'));
-  resultEl.appendChild(el('p', null, a.summary));
-
-  if (a.possible_causes && a.possible_causes.length) {
-    resultEl.appendChild(el('h3', null, 'Possible causes'));
-    const ul = el('ul', 'plain');
-    a.possible_causes.forEach(c => ul.appendChild(el('li', null, c)));
-    resultEl.appendChild(ul);
+  function stopPolling() {
+    if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
   }
 
-  if (a.evidence && a.evidence.length) {
-    resultEl.appendChild(el('h3', null, 'Evidence'));
-    a.evidence.forEach(e => {
-      const box = el('div', 'evidence');
-      box.appendChild(el('div', 'mono', e.key + ': ' + e.value));
-      box.appendChild(el('div', 'line', 'line ' + e.source_line));
-      resultEl.appendChild(box);
-    });
+  function render() {
+    if (!currentId) return;
+    if (!currentData) {
+      resultEl.className = 'panel';
+      resultEl.innerHTML = '';
+      resultEl.appendChild(spinnerLine(I.t('analyze.analyzing') + '…'));
+      return;
+    }
+    renderIncident(currentId, currentData);
   }
 
-  if (a.suggested_actions && a.suggested_actions.length) {
-    resultEl.appendChild(el('h3', null, 'Suggested investigation'));
-    const ol = el('ul', 'plain');
-    a.suggested_actions.forEach(s => ol.appendChild(el('li', null, s)));
-    resultEl.appendChild(ol);
-  }
-
-  resultEl.appendChild(el('h3', null, 'AI confidence'));
-  const conf = el('div', 'confidence');
-  const bar = el('div', 'bar');
-  const fill = el('span');
-  fill.style.width = Math.round(a.confidence * 100) + '%';
-  bar.appendChild(fill);
-  conf.appendChild(bar);
-  conf.appendChild(el('span', null, a.confidence.toFixed(2) + ' · ' + a.model + ' · ' + a.prompt_version));
-  resultEl.appendChild(conf);
-
-  if (data.related_incidents && data.related_incidents.length) {
-    resultEl.appendChild(el('h3', null, 'Related incidents'));
-    const ul = el('ul', 'plain');
-    data.related_incidents.forEach(r => {
-      const li = el('li');
-      li.appendChild(linkIncident(r.id));
-      li.appendChild(document.createTextNode(' ' + (r.title || '')));
-      if (r.severity) li.appendChild(document.createTextNode(' · ' + r.severity));
-      ul.appendChild(li);
-    });
-    resultEl.appendChild(ul);
-  }
-}
-
-// 如果 URL 里带了 id，直接加载并继续轮询，让结果页可以刷新和分享。
-if (params.get('id')) {
-  const id = Number(params.get('id'));
-  if (id > 0) {
-    submitBtn.disabled = true;
+  function renderIncident(id, data) {
     resultEl.className = 'panel';
-    const wrap = el('div');
-    wrap.appendChild(el('span', 'spinner'));
-    wrap.appendChild(el('span', 'poll-status', 'Loading…'));
-    resultEl.appendChild(wrap);
-    startPolling(id);
+    resultEl.innerHTML = '';
+
+    const head = el('div');
+    const title = el('div', null, data.title || (I.t('detail.incident') + ' #' + id));
+    title.style.fontSize = '19px';
+    title.style.fontWeight = '750';
+    title.style.marginBottom = '10px';
+    head.appendChild(title);
+
+    const badges = el('div');
+    badges.style.display = 'flex';
+    badges.style.gap = '8px';
+    badges.style.flexWrap = 'wrap';
+    badges.appendChild(severityBadge(data.severity));
+    badges.appendChild(statusBadge(data.status));
+    if (data.is_recurring) badges.appendChild(recurringBadge());
+    if (data.category) badges.appendChild(el('span', 'badge', data.category));
+    head.appendChild(badges);
+    resultEl.appendChild(head);
+
+    const meta = el('div', 'meta');
+    meta.style.marginTop = '12px';
+    meta.appendChild(linkIncident(id, I.t('result.view') + ' #' + id));
+    meta.appendChild(document.createTextNode(' · ' + formatTime(data.created_at)));
+    resultEl.appendChild(meta);
+
+    if (data.status === 'FAILED') {
+      resultEl.appendChild(el('div', 'alert error', I.t('result.failed.note')));
+    }
+
+    if (!data.analysis) {
+      if (elapsed >= 60) {
+        resultEl.appendChild(el('div', 'alert info', I.t('analyze.still')));
+      } else {
+        resultEl.appendChild(spinnerLine(I.t('analyze.analyzing') + '… ' + elapsed + 's'));
+      }
+      return;
+    }
+
+    renderAnalysis(resultEl, data.analysis);
+
+    if (data.related_incidents && data.related_incidents.length) {
+      resultEl.appendChild(el('h3', null, I.t('result.related')));
+      const ul = el('ul', 'plain');
+      data.related_incidents.forEach(r => {
+        const li = el('li');
+        li.appendChild(linkIncident(r.id));
+        li.appendChild(document.createTextNode(' ' + (r.title || '')));
+        if (r.severity) li.appendChild(document.createTextNode(' · ' + r.severity));
+        ul.appendChild(li);
+      });
+      resultEl.appendChild(ul);
+    }
   }
-}
+
+  // 语言切换后文案要跟着变，正在展示的结果需要重绘。
+  onLangChange(() => {
+    document.title = I.t('analyze.title') + ' — DevLens';
+    if (currentId && currentData) render();
+    else if (!currentId) {
+      resultEl.className = 'panel empty';
+      resultEl.textContent = I.t('analyze.empty');
+    }
+  });
+
+  if (params.get('id')) {
+    const id = Number(params.get('id'));
+    if (id > 0) {
+      submitBtn.disabled = true;
+      currentId = id;
+      resultEl.className = 'panel';
+      resultEl.innerHTML = '';
+      resultEl.appendChild(spinnerLine(I.t('analyze.loading') + '…'));
+      startPolling(id);
+    }
+  }
+})();
 </script>
 </body>
 </html>
