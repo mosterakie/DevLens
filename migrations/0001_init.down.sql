@@ -1,0 +1,8 @@
+DROP TABLE IF EXISTS comments;
+DROP TABLE IF EXISTS incident_events;
+DROP TABLE IF EXISTS incident_analysis;
+DROP TABLE IF EXISTS incidents;
+DROP TABLE IF EXISTS users;
+
+DROP TYPE IF EXISTS status_t;
+DROP TYPE IF EXISTS severity_t;

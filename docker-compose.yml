@@ -1,0 +1,37 @@
+# 开发用的依赖服务。
+#
+# 如果本机已经装了 PostgreSQL 和 Redis，可以不用这个文件，
+# 直接按 .env.example 里的地址连接即可。
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: devlens
+      POSTGRES_PASSWORD: devlens
+      POSTGRES_DB: devlens
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U devlens"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    # AOF 让每个写命令落盘。默认的 RDB 快照会丢掉崩溃时
+    # 队列里还没处理的任务。
+    command: ["redis-server", "--appendonly", "yes"]
+    ports:
+      - "6379:6379"
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+
+volumes:
+  pgdata:
+  redisdata:
