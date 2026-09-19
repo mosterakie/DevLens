@@ -36,7 +36,8 @@ go run ./cmd/api      # :8080
 go run ./cmd/worker   # 无端口
 ```
 
-配置见 `.env.example`。
+配置见 `.env.example`，复制成 `.env` 即可，api 和 worker 启动时会自动读取。
+真实环境变量优先于文件内容，所以 CI 里直接导出变量就能覆盖本地配置。
 
 ### 配 LLM
 

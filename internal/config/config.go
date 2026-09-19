@@ -37,7 +37,24 @@ type Config struct {
 //
 // 缺必填项时立刻返回错误，让进程在启动阶段就失败，
 // 而不是等第一个请求才 500。
+// DotEnvPath 是默认的 .env 位置。可用 DOTENV_PATH 覆盖，
+// 设为空字符串则完全不读文件。
+const DotEnvPath = ".env"
+
+// Load 读取配置。它会先尝试加载 .env，再读环境变量。
+//
+// 顺序很重要：.env 只是本地默认值，真实环境变量优先。
 func Load() (*Config, error) {
+	path := env("DOTENV_PATH", DotEnvPath)
+	if path != "" {
+		if err := LoadDotEnv(path); err != nil {
+			return nil, err
+		}
+	}
+	return loadFromEnv()
+}
+
+func loadFromEnv() (*Config, error) {
 	c := &Config{
 		DatabaseURL: env("DATABASE_URL", ""),
 		RedisAddr:   env("REDIS_ADDR", "127.0.0.1:6379"),
