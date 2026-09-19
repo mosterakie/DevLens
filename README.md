@@ -65,6 +65,7 @@ curl http://127.0.0.1:8080/api/v1/incidents/1
 | GET | `/api/v1/incidents/:id/events` | 状态变更时间线 |
 | PATCH | `/api/v1/incidents/:id/status` | 状态转移 |
 | GET | `/healthz` `/readyz` | 存活与就绪 |
+| GET | `/metrics` | Prometheus 指标 |
 
 ## 开发
 

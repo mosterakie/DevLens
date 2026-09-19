@@ -15,6 +15,7 @@ import (
 
 	"github.com/mosterakie/DevLens/internal/config"
 	"github.com/mosterakie/DevLens/internal/handler"
+	"github.com/mosterakie/DevLens/internal/metrics"
 	"github.com/mosterakie/DevLens/internal/middleware"
 	"github.com/mosterakie/DevLens/internal/queue"
 	"github.com/mosterakie/DevLens/internal/repository"
@@ -56,7 +57,18 @@ func run(log *slog.Logger) error {
 	svc := service.NewIncidentService(incidentRepo, q)
 	h := handler.NewIncidentHandler(svc, analysisRepo)
 
-	router := buildRouter(cfg, log, h, db, q)
+	reg := metrics.New()
+	gauges := metrics.NewGauges()
+	// 队列积压：唯一的"当前状态"类指标，在渲染时才去问 Redis。
+	gauges.Register("devlens_queue_depth", func() float64 {
+		d, err := q.Depth(context.Background())
+		if err != nil {
+			return -1
+		}
+		return float64(d)
+	})
+
+	router := buildRouter(cfg, log, h, db, q, reg, gauges)
 
 	srv := &http.Server{
 		Addr:              ":" + cfg.Port,
@@ -100,11 +112,14 @@ func buildRouter(
 	h *handler.IncidentHandler,
 	db *repository.DB,
 	q *queue.Queue,
+	reg *metrics.Registry,
+	gauges *metrics.Gauges,
 ) *gin.Engine {
 	r := gin.New()
 	r.Use(middleware.RequestID())
 	r.Use(middleware.Logger(log))
 	r.Use(middleware.Recovery(log))
+	r.Use(middleware.Metrics(reg))
 
 	v1 := r.Group("/api/v1")
 
@@ -140,6 +155,13 @@ func buildRouter(
 
 	// 健康检查放在限流之外：编排系统探测不该被限流挡住，
 	// 而且/readyz 失败会导致摘流量，被限流误判的代价很大。
+	// 指标端点不鉴权也不限流：它需要被监控系统高频抓取。
+	// 真实部署里应当只在内网暴露。
+	r.GET("/metrics", func(c *gin.Context) {
+		c.Header("Content-Type", "text/plain; version=0.0.4; charset=utf-8")
+		c.String(http.StatusOK, reg.Render()+gauges.Render())
+	})
+
 	r.GET("/healthz", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"status": "ok"})
 	})

@@ -6,8 +6,8 @@
 | M1 | 纯逻辑 | fingerprint + domain（状态机） | ✅ 已完成，`go test ./...` 全绿 |
 | M2 | 同步链路 | POST /analyze、fingerprint 命中同类 | ✅ 已完成 |
 | M3 | 异步链路 | worker + 分析器 + 写 analysis | ✅ 已完成 |
-| M4 | 前端 4 页 | Landing / Analyze / List / Detail | 能独立走完 Demo |
-| M5 | 加固 | 限流、超时、重试、`/readyz`、`/metrics` | 429 可复现，指标有值 |
+| M4 | 前端 4 页 | Landing / Analyze / List / Detail | ✅ 已完成 |
+| M5 | 加固 | 限流、超时、重试、`/readyz`、`/metrics` | ✅ 已完成 |
 | M6 | 部署 | 公网可访问 | 陌生人 60 秒走完 Demo |
 
 顺序不要调换，尤其 M1 要在 M2 之前 —— fingerprint 是后面所有设计的基础，
