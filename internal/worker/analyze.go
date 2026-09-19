@@ -162,6 +162,9 @@ func (w *AnalyzerWorker) Handle(ctx context.Context, incidentID int64) error {
 		Normalized:       inc.Normalized,
 		IncidentID:       inc.ID,
 		RelatedSummaries: summaries,
+		// 语言取自提交时记录的值，所以同一条记录无论何时重跑
+		// 都会用同一种语言生成。
+		Lang: inc.Lang,
 	}
 
 	started := time.Now()

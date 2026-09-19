@@ -70,6 +70,62 @@ func TestHeuristicClassifiesKnownPatterns(t *testing.T) {
 	}
 }
 
+// TestHeuristicDefaultsToChinese 是这一轮的需求：默认语言是中文。
+func TestHeuristicDefaultsToChinese(t *testing.T) {
+	h := NewHeuristic()
+	got, err := h.Analyze(context.Background(), Input{
+		RawLog:     "ERROR: context deadline exceeded",
+		IncidentID: 1,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !containsHan(got.Analysis.Summary) {
+		t.Errorf("default summary should be Chinese, got %q", got.Analysis.Summary)
+	}
+	if !containsHan(got.Title) {
+		t.Errorf("default title should be Chinese, got %q", got.Title)
+	}
+}
+
+// TestHeuristicHonoursEnglish 确认显式指定英文时输出英文。
+func TestHeuristicHonoursEnglish(t *testing.T) {
+	h := NewHeuristic()
+	got, err := h.Analyze(context.Background(), Input{
+		RawLog:     "ERROR: context deadline exceeded",
+		IncidentID: 1,
+		Lang:       domain.LangEn,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if containsHan(got.Analysis.Summary) {
+		t.Errorf("English summary should not contain Han characters, got %q", got.Analysis.Summary)
+	}
+	if containsHan(got.Title) {
+		t.Errorf("English title should not contain Han characters, got %q", got.Title)
+	}
+}
+
+// TestHeuristicCategoryStaysEnglish 确认分类标识不随语言变化。
+// 它是过滤和聚合的依据，翻译会让同一种错误产生两个不同的 key。
+func TestHeuristicCategoryStaysEnglish(t *testing.T) {
+	h := NewHeuristic()
+	for _, lang := range domain.AllLangs() {
+		got, err := h.Analyze(context.Background(), Input{
+			RawLog:     "ERROR: context deadline exceeded",
+			IncidentID: 1,
+			Lang:       lang,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got.Category != "Database / Timeout" {
+			t.Errorf("lang %s: category = %q, want the stable English key", lang, got.Category)
+		}
+	}
+}
+
 // TestHeuristicAdmitsUncertainty 确认无法判断时返回低置信度并说明，
 // 而不是编造一个分类。
 func TestHeuristicAdmitsUncertainty(t *testing.T) {
@@ -92,7 +148,7 @@ func TestHeuristicAdmitsUncertainty(t *testing.T) {
 	}
 }
 
-// TestHeuristicEvidenceHasLineNumbers 确认证据带行号且能在日志中定位。
+// TestHeuristicEvidenceHasLineNumbers 确认证据带行号且指向原文。
 func TestHeuristicEvidenceHasLineNumbers(t *testing.T) {
 	raw := strings.Join([]string{
 		"2026-09-18 14:32:51 ERROR request failed",
@@ -120,21 +176,23 @@ func TestHeuristicEvidenceHasLineNumbers(t *testing.T) {
 			t.Errorf("evidence line %d does not contain %q: %q",
 				e.SourceLine, e.Key, lines[e.SourceLine-1])
 		}
+		// value 必须是日志原文，任何语言下都不翻译。
+		if !strings.Contains(lines[e.SourceLine-1], e.Value) {
+			t.Errorf("evidence value %q is not verbatim from the log", e.Value)
+		}
 	}
 }
 
-// TestHeuristicConfidenceVaries 确认 confidence 会随证据数量变化，
-// 而不是恒为一个常数。
+// TestHeuristicConfidenceVaries 确认 confidence 会随证据数量变化。
 func TestHeuristicConfidenceVaries(t *testing.T) {
-	oneLine := "context deadline exceeded"
-	twoLines := "context deadline exceeded\ncontext deadline exceeded"
-
 	h := NewHeuristic()
-	a, err := h.Analyze(context.Background(), Input{RawLog: oneLine, IncidentID: 1})
+	a, err := h.Analyze(context.Background(), Input{
+		RawLog: "context deadline exceeded", IncidentID: 1})
 	if err != nil {
 		t.Fatal(err)
 	}
-	b, err := h.Analyze(context.Background(), Input{RawLog: twoLines, IncidentID: 2})
+	b, err := h.Analyze(context.Background(), Input{
+		RawLog: "context deadline exceeded\ncontext deadline exceeded", IncidentID: 2})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -147,4 +205,14 @@ func TestHeuristicName(t *testing.T) {
 	if got := NewHeuristic().Name(); got != "heuristic-v1" {
 		t.Errorf("Name() = %q", got)
 	}
+}
+
+// containsHan 报告字符串里是否含汉字。
+func containsHan(s string) bool {
+	for _, r := range s {
+		if r >= 0x4E00 && r <= 0x9FFF {
+			return true
+		}
+	}
+	return false
 }

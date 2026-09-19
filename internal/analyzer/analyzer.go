@@ -32,6 +32,18 @@ type Input struct {
 	IncidentID int64
 	// RelatedSummaries 是同类历史问题的摘要，供模型参考。
 	RelatedSummaries []string
+
+	// Lang 决定诊断内容使用哪种语言。零值表示未指定，
+	// 由 LangOr 兜底成默认语言。
+	Lang domain.Lang
+}
+
+// LangOr 返回有效的语言，未设置时给出默认值。
+func (in Input) LangOr() domain.Lang {
+	if in.Lang.IsValid() {
+		return in.Lang
+	}
+	return domain.DefaultLang()
 }
 
 // Result 是一次分析的完整产出。

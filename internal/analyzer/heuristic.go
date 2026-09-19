@@ -20,14 +20,14 @@ func NewHeuristic() *Heuristic { return &Heuristic{} }
 // Name 返回实现标识，会记入 analysis.model。
 func (h *Heuristic) Name() string { return "heuristic-v1" }
 
-// rule 描述一类常见错误的关键词与对应判断。
+// rule 描述一类常见错误的关键词与分类。
+//
+// 文案不放在这里：它随语言变化，而判定逻辑不变，
+// 所以分开到 heuristic_text.go。
 type rule struct {
 	category string
 	severity domain.Severity
-	summary  string
 	keywords []string
-	causes   []string
-	actions  []string
 }
 
 // rules 按顺序匹配，命中第一条即返回。
@@ -38,94 +38,32 @@ var rules = []rule{
 	{
 		category: "Database / Timeout",
 		severity: domain.SeverityHigh,
-		summary:  "The request exceeded its deadline while waiting on the database.",
 		keywords: []string{"context deadline exceeded", "pool", "connection refused"},
-		causes: []string{
-			"Database connection pool exhausted",
-			"Slow query holding connections",
-			"Connection leak",
-			"Network latency between service and database",
-		},
-		actions: []string{
-			"Inspect connection pool utilization",
-			"Check for slow queries",
-			"Verify connections are released back to the pool",
-		},
 	},
 	{
 		category: "Timeout",
 		severity: domain.SeverityHigh,
-		summary:  "An operation exceeded its configured timeout.",
 		keywords: []string{"i/o timeout", "timeout", "deadline"},
-		causes: []string{
-			"Downstream dependency slower than expected",
-			"Timeout threshold set too low",
-			"Network latency",
-		},
-		actions: []string{
-			"Identify the slow dependency",
-			"Compare current latency with the configured budget",
-		},
 	},
 	{
 		category: "Concurrency / Nil",
 		severity: domain.SeverityCritical,
-		summary:  "The process panicked while handling a request.",
 		keywords: []string{"panic", "nil pointer", "invalid memory address"},
-		causes: []string{
-			"Nil pointer dereference",
-			"Uninitialized dependency",
-			"Concurrent map access",
-		},
-		actions: []string{
-			"Locate the panic site in the stack trace",
-			"Add a regression test for the failing input",
-		},
 	},
 	{
 		category: "Network / DNS",
 		severity: domain.SeverityHigh,
-		summary:  "A hostname could not be resolved.",
 		keywords: []string{"no such host", "dns", "lookup"},
-		causes: []string{
-			"DNS resolution failure",
-			"Misconfigured service name",
-			"Resolver unreachable",
-		},
-		actions: []string{
-			"Verify the hostname is correct",
-			"Check DNS resolver health",
-		},
 	},
 	{
 		category: "Auth",
 		severity: domain.SeverityMedium,
-		summary:  "An authentication or authorization check failed.",
 		keywords: []string{"unauthorized", "permission denied", "token expired", "forbidden"},
-		causes: []string{
-			"Expired credentials",
-			"Missing permission on the caller",
-			"Clock skew invalidating tokens",
-		},
-		actions: []string{
-			"Check credential expiry",
-			"Verify the caller has the required scope",
-		},
 	},
 	{
 		category: "Resource / Memory",
 		severity: domain.SeverityCritical,
-		summary:  "The process ran out of memory.",
 		keywords: []string{"out of memory", "oom", "cannot allocate memory"},
-		causes: []string{
-			"Memory leak",
-			"Working set larger than the container limit",
-			"Unbounded buffer growth",
-		},
-		actions: []string{
-			"Check memory usage trend",
-			"Compare the limit with the actual working set",
-		},
 	},
 }
 
@@ -134,6 +72,7 @@ var rules = []rule{
 // 命中不了任何规则时返回一个明确的"信息不足"结果，
 // 而不是编造一个分类——这是这类工具最重要的克制。
 func (h *Heuristic) Analyze(_ context.Context, in Input) (Result, error) {
+	lang := in.LangOr()
 	lower := strings.ToLower(in.RawLog)
 
 	for _, r := range rules {
@@ -142,13 +81,15 @@ func (h *Heuristic) Analyze(_ context.Context, in Input) (Result, error) {
 			continue
 		}
 
-		evidence := findEvidence(in.RawLog, token)
+		text := textFor(r.category, lang)
+		evidence := findEvidence(in.RawLog, token, lang)
+
 		a := &domain.Analysis{
 			IncidentID:       in.IncidentID,
-			Summary:          r.summary,
-			PossibleCauses:   r.causes,
+			Summary:          text.summary,
+			PossibleCauses:   text.causes,
 			Evidence:         evidence,
-			SuggestedActions: r.actions,
+			SuggestedActions: text.actions,
 			Model:            h.Name(),
 			PromptVersion:    PromptVersion,
 			Confidence:       heuristicConfidence(evidence),
@@ -159,18 +100,19 @@ func (h *Heuristic) Analyze(_ context.Context, in Input) (Result, error) {
 		}
 		return Result{
 			Analysis: a,
-			Title:    titleFor(r.category),
+			Title:    text.titles,
 			Severity: r.severity,
 			Category: r.category,
 		}, nil
 	}
 
+	text := unknownText(lang)
 	a := &domain.Analysis{
 		IncidentID:       in.IncidentID,
-		Summary:          "The log does not contain enough information to identify a likely cause.",
-		PossibleCauses:   []string{"Insufficient detail in the submitted log"},
+		Summary:          text.summary,
+		PossibleCauses:   text.causes,
 		Evidence:         nil,
-		SuggestedActions: []string{"Include the full stack trace and surrounding context"},
+		SuggestedActions: text.actions,
 		Model:            h.Name(),
 		PromptVersion:    PromptVersion,
 		Confidence:       0.2,
@@ -181,18 +123,10 @@ func (h *Heuristic) Analyze(_ context.Context, in Input) (Result, error) {
 	}
 	return Result{
 		Analysis: a,
-		Title:    "Unclassified error",
+		Title:    text.titles,
 		Severity: domain.SeverityLow,
 		Category: "Unknown",
 	}, nil
-}
-
-// titleFor 由分类生成一个简短标题。
-func titleFor(category string) string {
-	if i := strings.LastIndex(category, "/"); i >= 0 {
-		return strings.TrimSpace(category[i+1:]) + " issue"
-	}
-	return category
 }
 
 func matchRule(lower string, r rule) (string, bool) {
@@ -221,7 +155,8 @@ func heuristicConfidence(evidence []domain.Evidence) float64 {
 // findEvidence 在日志里找出包含关键词的那一行，记录行号。
 //
 // 行号让用户能直接核对原文。没有可核对证据的诊断是不可验证的断言。
-func findEvidence(raw, token string) []domain.Evidence {
+// value 始终引用日志原文，不翻译——证据的意义就是可核对。
+func findEvidence(raw, token string, _ domain.Lang) []domain.Evidence {
 	lines := strings.Split(raw, "\n")
 	var out []domain.Evidence
 

@@ -144,7 +144,7 @@ func (a *HTTPAnalyzer) call(ctx context.Context, in Input, attempt int) (string,
 	body := chatRequest{
 		Model: a.cfg.Model,
 		Messages: []chatMessage{
-			{Role: "system", Content: systemPrompt},
+			{Role: "system", Content: SystemPrompt(in.LangOr())},
 			{Role: "user", Content: buildRetryUserPrompt(in, attempt)},
 		},
 		Temperature: a.cfg.Temperature,

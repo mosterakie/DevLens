@@ -27,6 +27,8 @@ type CreateIncidentInput struct {
 	Normalized  string
 	Fingerprint []byte
 	CreatedBy   *int64
+	// Lang 记录这条记录应当用哪种语言生成诊断。
+	Lang domain.Lang
 }
 
 // Create 插入一条 Incident，状态为 ANALYZING，并写入一条创建事件。
@@ -38,13 +40,13 @@ func (r *IncidentRepo) Create(ctx context.Context, in CreateIncidentInput) (*dom
 
 	err := r.db.InTx(ctx, func(tx pgx.Tx) error {
 		const q = `
-			INSERT INTO incidents (raw_log, normalized, fingerprint, created_by, status)
-			VALUES ($1, $2, $3, $4, 'ANALYZING')
+			INSERT INTO incidents (raw_log, normalized, fingerprint, created_by, status, lang)
+			VALUES ($1, $2, $3, $4, 'ANALYZING', $5)
 			RETURNING id, title, raw_log, normalized, fingerprint, severity,
-			          category, status, is_recurring, created_by, created_at, updated_at`
+			          category, status, is_recurring, lang, created_by, created_at, updated_at`
 
 		inc, err := scanIncident(tx.QueryRow(ctx, q,
-			in.RawLog, in.Normalized, in.Fingerprint, in.CreatedBy))
+			in.RawLog, in.Normalized, in.Fingerprint, in.CreatedBy, string(in.Lang)))
 		if err != nil {
 			return fmt.Errorf("insert incident: %w", err)
 		}
@@ -69,7 +71,7 @@ func (r *IncidentRepo) Create(ctx context.Context, in CreateIncidentInput) (*dom
 func (r *IncidentRepo) GetByID(ctx context.Context, id int64) (*domain.Incident, error) {
 	const q = `
 		SELECT id, title, raw_log, normalized, fingerprint, severity,
-		       category, status, is_recurring, created_by, created_at, updated_at
+		       category, status, is_recurring, lang, created_by, created_at, updated_at
 		FROM incidents WHERE id = $1`
 
 	inc, err := scanIncident(r.db.pool.QueryRow(ctx, q, id))
@@ -164,7 +166,7 @@ func (r *IncidentRepo) List(ctx context.Context, f ListFilter) ([]*domain.Incide
 
 	const q = `
 		SELECT id, title, raw_log, normalized, fingerprint, severity,
-		       category, status, is_recurring, created_by, created_at, updated_at
+		       category, status, is_recurring, lang, created_by, created_at, updated_at
 		FROM incidents
 		WHERE ($1::status_t IS NULL OR status = $1::status_t)
 		  AND ($2::severity_t IS NULL OR severity = $2::severity_t)
@@ -273,15 +275,17 @@ func scanIncident(s rowScanner) (*domain.Incident, error) {
 	)
 	// severity 和 category 在分析完成前是 NULL，用 *string 接收可空值，
 	// 再由 domain 层转成枚举。
+	var lang string
 	err := s.Scan(
 		&inc.ID, &title, &inc.RawLog, &inc.Normalized, &inc.Fingerprint,
 		&severity, &category, &inc.Status, &inc.IsRecurring,
-		&inc.CreatedBy, &inc.CreatedAt, &inc.UpdatedAt,
+		&lang, &inc.CreatedBy, &inc.CreatedAt, &inc.UpdatedAt,
 	)
 	if err != nil {
 		return nil, err
 	}
 	inc.Title = title
+	inc.Lang = domain.Lang(lang)
 	if severity != nil {
 		inc.Severity = domain.Severity(*severity)
 	}

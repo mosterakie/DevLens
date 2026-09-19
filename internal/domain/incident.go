@@ -33,9 +33,11 @@ type Incident struct {
 	Category    string
 	Status      Status
 	IsRecurring bool
-	CreatedBy   *int64
-	CreatedAt   time.Time
-	UpdatedAt   time.Time
+	// Lang 是这条记录诊断内容的语言。
+	Lang      Lang
+	CreatedBy *int64
+	CreatedAt time.Time
+	UpdatedAt time.Time
 }
 
 // Evidence 是 AI 在日志中找到的一条具体证据。

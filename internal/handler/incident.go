@@ -42,6 +42,7 @@ type analyzeResponse struct {
 	ID                 int64                `json:"id"`
 	Status             domain.Status        `json:"status"`
 	IsRecurring        bool                 `json:"is_recurring"`
+	Lang               string               `json:"lang"`
 	RelatedIncidentIDs []int64              `json:"related_incident_ids"`
 	RelatedIncidents   []relatedIncidentDTO `json:"related_incidents"`
 	CreatedAt          time.Time            `json:"created_at"`
@@ -71,6 +72,7 @@ type incidentDTO struct {
 	Severity    *string       `json:"severity"`
 	Category    string        `json:"category,omitempty"`
 	IsRecurring bool          `json:"is_recurring"`
+	Lang        string        `json:"lang,omitempty"`
 	CreatedAt   time.Time     `json:"created_at"`
 	UpdatedAt   time.Time     `json:"updated_at"`
 	Analysis    *analysisDTO  `json:"analysis"`
@@ -113,7 +115,7 @@ func (h *IncidentHandler) Analyze(c *gin.Context) {
 		return
 	}
 
-	res, err := h.svc.Submit(c.Request.Context(), req.Log)
+	res, err := h.svc.SubmitLang(c.Request.Context(), req.Log, parseLang(c))
 	if err != nil {
 		// 入队失败时 Incident 已经建好，仍然返回它，让用户能查询状态。
 		// 携带错误的情况由 worker 的兜底扫描处理。
@@ -140,6 +142,7 @@ func (h *IncidentHandler) Analyze(c *gin.Context) {
 		ID:                 res.Incident.ID,
 		Status:             res.Incident.Status,
 		IsRecurring:        res.Recurring,
+		Lang:               string(res.Incident.Lang),
 		RelatedIncidentIDs: ids,
 		RelatedIncidents:   related,
 		CreatedAt:          res.Incident.CreatedAt,
@@ -347,6 +350,7 @@ func toIncidentDTO(inc *domain.Incident) incidentDTO {
 		Severity:    severityPtr(inc.Severity),
 		Category:    inc.Category,
 		IsRecurring: inc.IsRecurring,
+		Lang:        string(inc.Lang),
 		CreatedAt:   inc.CreatedAt,
 		UpdatedAt:   inc.UpdatedAt,
 	}

@@ -69,6 +69,14 @@ type AnalyzeResult struct {
 // 用户要等几十秒才能看到"这问题以前出现过"。指纹是纯计算，
 // 所以能放在同步路径上。
 func (s *IncidentService) Submit(ctx context.Context, rawLog string) (*AnalyzeResult, error) {
+	return s.SubmitLang(ctx, rawLog, domain.DefaultLang())
+}
+
+// SubmitLang 与 Submit 相同，但显式指定诊断语言。
+func (s *IncidentService) SubmitLang(ctx context.Context, rawLog string, lang domain.Lang) (*AnalyzeResult, error) {
+	if !lang.IsValid() {
+		lang = domain.DefaultLang()
+	}
 	if err := domain.ValidateLog(rawLog); err != nil {
 		return nil, err
 	}
@@ -89,6 +97,7 @@ func (s *IncidentService) Submit(ctx context.Context, rawLog string) (*AnalyzeRe
 		Normalized:  normalized,
 		Fingerprint: fp,
 		CreatedBy:   DemoUserID(),
+		Lang:        lang,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("create incident: %w", err)
