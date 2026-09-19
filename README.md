@@ -1,5 +1,7 @@
 # DevLens
 
+[![CI](https://github.com/mosterakie/DevLens/actions/workflows/ci.yml/badge.svg)](https://github.com/mosterakie/DevLens/actions/workflows/ci.yml)
+
 把一段错误日志变成结构化诊断，并找出历史上出现过的同类问题。
 
 ## 它是怎么工作的
@@ -101,6 +103,9 @@ go vet ./...
 gofmt -l .
 node scripts/check-i18n.js # 界面词条完整性
 ```
+
+`-race` 需要 gcc。Windows 上 Go 的 cgo 只认 gcc 不认 MSVC，
+所以本地装了 Visual Studio 也跑不了，这项检查交给 CI。
 
 集成测试需要一个专用的测试库（默认 `devlens_test`）：
 

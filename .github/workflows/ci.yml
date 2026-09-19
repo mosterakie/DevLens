@@ -1,0 +1,147 @@
+# 持续集成。
+#
+# 本地开发时只跑得动一部分验证：Windows 上没有 gcc，go test -race
+# 无法执行；也不想为了跑一次测试在本机装一套编译器。这些检查交给 CI。
+#
+# 三个 job 分别对应不同性质的风险：
+#   test        纯逻辑 + 竞态检测，不需要外部依赖，最快
+#   integration 真实 PostgreSQL 上的事务与幂等，需要 service 容器
+#   image       Dockerfile 能否构建，以及镜像是否以非 root 运行
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  # 允许在 Actions 页面手动触发一次
+  workflow_dispatch:
+
+# 同一分支上的旧运行会被取消，避免连续 push 时排队。
+# 只对 PR 取消：main 上的每次运行都值得留下记录。
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: 单元测试与竞态检测
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          # 缓存模块下载，重复运行省掉几十秒。
+          cache: true
+
+      - name: 检查格式
+        run: |
+          unformatted=$(gofmt -l .)
+          if [ -n "$unformatted" ]; then
+            echo "以下文件未格式化："
+            echo "$unformatted"
+            exit 1
+          fi
+
+      - name: go vet
+        run: go vet ./...
+
+      - name: 单元测试（含竞态检测）
+        # ubuntu runner 自带 gcc，CGO 可用，所以 -race 能跑。
+        # 竞态只在并发下暴露，本地串行测试看不到，这里必须覆盖。
+        run: go test -race -short ./...
+
+      - name: 界面词条完整性
+        run: node scripts/check-i18n.js
+
+  integration:
+    name: 集成测试
+    runs-on: ubuntu-latest
+    # 单独一个 job：需要 service 容器，启动有成本，
+    # 而且失败原因和单元测试完全不同，分开便于定位。
+    services:
+      postgres:
+        # 与生产一致的版本，避免本地能过 CI 不过这类差异。
+        image: postgres:18-alpine
+        env:
+          POSTGRES_USER: devlens
+          POSTGRES_PASSWORD: devlens
+          POSTGRES_DB: devlens_test
+        ports:
+          - 5432:5432
+        # 等服务真正就绪再开始。没有 healthcheck 时
+        # service 容器"已启动"但还不能接受连接，测试会随机失败。
+        options: >-
+          --health-cmd "pg_isready -U devlens"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      TEST_DATABASE_URL: postgres://devlens:devlens@127.0.0.1:5432/devlens_test?sslmode=disable
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: 集成测试
+        # 测试会自己建表并清空数据，不需要预先执行迁移。
+        run: go test -race -v ./internal/repository/...
+
+  image:
+    name: 镜像构建
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # buildx 提供更好的层缓存，重复构建快很多。
+      - uses: docker/setup-buildx-action@v3
+
+      - name: 构建镜像
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: false
+          # 导出到本地 docker 以便下一步检查，否则镜像只在构建缓存里。
+          load: true
+          tags: devlens:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: 确认镜像以非 root 运行
+        # distroless 的默认 tag 是 root，只有 :nonroot 才是 65532。
+        # 这一点容易改错且不会导致构建失败，所以显式断言。
+        run: |
+          user=$(docker inspect devlens:ci --format '{{.Config.User}}')
+          echo "镜像用户: $user"
+          if [ "$user" = "0" ] || [ -z "$user" ]; then
+            echo "镜像以 root 运行，Dockerfile 应使用 distroless 的 :nonroot 变体"
+            exit 1
+          fi
+
+      - name: 确认二进制可以启动
+        # 缺 DATABASE_URL 时应当立刻退出并说明缺什么，
+        # 而不是静默启动。这验证的是 fail-fast 行为。
+        run: |
+          set +e
+          output=$(docker run --rm --entrypoint /app/api devlens:ci 2>&1)
+          status=$?
+          set -e
+          echo "$output"
+          if [ $status -eq 0 ]; then
+            echo "缺少必填配置时进程应当以非零状态退出"
+            exit 1
+          fi
+          if ! echo "$output" | grep -q "DATABASE_URL"; then
+            echo "错误信息应当指明缺少 DATABASE_URL"
+            exit 1
+          fi
