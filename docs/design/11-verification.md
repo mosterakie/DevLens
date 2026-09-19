@@ -140,16 +140,70 @@ User=65532（非 root）
 地址而该线路不通，导致拉取超时。配置 `registry-mirrors` 后可用。
 这是网络环境问题，与项目代码无关。
 
+## CI 实际运行结果
+
+`.github/workflows/ci.yml`，三个 job 在 GitHub Actions 上跑通（2 分 7 秒）：
+
+| Job | 耗时 | 结果 |
+|---|---|---|
+| 单元测试与竞态检测 | 2m4s | ok |
+| 集成测试 | 54s | ok |
+| 镜像构建 | 1m47s | ok |
+
+### 竞态检测
+
+这是本地做不了、只能靠 CI 的检查。日志确认 `go test -race -short ./...`
+真的以 race 模式编译执行（该步骤耗时 51 秒，是插桩编译的典型开销）：
+
+```
+ok  internal/analyzer     12.207s
+ok  internal/config        1.017s
+ok  internal/domain        1.017s
+ok  internal/fingerprint   1.071s
+ok  internal/handler       1.015s
+ok  internal/metrics       1.009s
+ok  internal/repository    1.010s
+ok  internal/service       1.016s
+```
+
+**未发现竞态。**
+
+### 镜像 job 的两条断言
+
+CI 日志里可以看到断言确实执行了：
+
+```
+镜像用户: 65532
+{"level":"ERROR","error":"DATABASE_URL is required"}
+```
+
+第一条断言镜像不是 root。distroless 的默认 tag 是 root，改错了
+不会导致构建失败，只会静默地以 root 运行，所以值得显式断言。
+
+第二条断言缺少必填配置时进程以非零状态退出，验证的是 fail-fast
+行为——配置错误应该在启动时暴露，而不是等到第一个请求。
+
+### 为什么本机跑不了 -race
+
+原记录只写了"未安装 gcc"，实际原因更具体：
+
+本机装了 Visual Studio 18 BuildTools（MSVC 的 `cl.exe`，版本 19.51），
+所以 C++ 可以编译。但 **Go 的 cgo 在 Windows 上只支持 gcc，不支持 MSVC**：
+cgo 会向 C 编译器传 `-Werror`，MSVC 对应的参数是 `/WX`，收到 `-Werror`
+直接报 `D8021: 无效的数值参数`。
+
+用最小 cgo 程序验证过，同样失败，说明是工具链不兼容而非项目代码问题。
+
 ## 未验证的部分
 
 诚实列出。
 
 | 项目 | 原因 |
 |---|---|
-| `go test -race` | 需要 gcc，本机未安装。应在 CI 中执行 |
 | 真实浏览器中的语言切换交互 | GUI 操作需要人工批准；改用 Node 验证 i18n 纯逻辑 |
 | 部署到公网 | 需要托管平台账号与域名 |
 | 高并发下的表现 | 未做压测 |
+| CI 在 PR 流程下的行为 | 目前只有 main 上的 push 触发过 |
 
 ## 复现验证
 

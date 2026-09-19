@@ -104,8 +104,10 @@ gofmt -l .
 node scripts/check-i18n.js # 界面词条完整性
 ```
 
-`-race` 需要 gcc。Windows 上 Go 的 cgo 只认 gcc 不认 MSVC，
-所以本地装了 Visual Studio 也跑不了，这项检查交给 CI。
+`-race` 需要在 CI 中执行。Windows 上 Go 的 cgo 只支持 gcc 不支持 MSVC，
+即使本机装了 Visual Studio 也无法运行竞态检测。
+
+CI 配置见 `.github/workflows/ci.yml`，包含竞态检测、集成测试和镜像构建。
 
 集成测试需要一个专用的测试库（默认 `devlens_test`）：
 
