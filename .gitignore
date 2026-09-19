@@ -34,6 +34,7 @@ go.work.sum
 # 本地构建产物
 /bin/
 *.log
+*.err
 
 # 本地环境
 .env.local
