@@ -20,6 +20,10 @@ type HTTPConfig struct {
 	MaxAttempts int
 	MaxTokens   int
 	Temperature float64
+
+	// JSONMode 请求服务端保证输出是合法 JSON。DeepSeek 和 OpenAI
+	// 都支持，但并非所有兼容服务都支持，所以做成开关。
+	JSONMode bool
 }
 
 // HTTPAnalyzer 通过 HTTP 调用兼容 OpenAI 协议的接口。
@@ -57,6 +61,19 @@ type chatRequest struct {
 	Messages    []chatMessage `json:"messages"`
 	Temperature float64       `json:"temperature"`
 	MaxTokens   int           `json:"max_tokens"`
+
+	// ResponseFormat 请求结构化输出。DeepSeek 要求同时设置
+	// response_format 并在 prompt 里出现 "json" 字样和格式示例，
+	// 否则该参数不生效。SystemPrompt 已满足后两个条件。
+	//
+	// 用 omitempty：不是所有兼容 OpenAI 协议的服务都接受这个字段，
+	// 留空时就不发送。
+	ResponseFormat *responseFormat `json:"response_format,omitempty"`
+}
+
+// responseFormat 是 OpenAI 协议的 response_format 字段。
+type responseFormat struct {
+	Type string `json:"type"`
 }
 
 type chatResponse struct {
@@ -119,6 +136,9 @@ func (a *HTTPAnalyzer) call(ctx context.Context, in Input, attempt int) (string,
 		},
 		Temperature: a.cfg.Temperature,
 		MaxTokens:   a.cfg.MaxTokens,
+	}
+	if a.cfg.JSONMode {
+		body.ResponseFormat = &responseFormat{Type: "json_object"}
 	}
 	if attempt >= 3 {
 		// 最后一次尝试用确定性采样，减少随机性带来的解析失败。

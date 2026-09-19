@@ -78,13 +78,15 @@ func chooseAnalyzer(cfg *config.Config, log *slog.Logger) analyzer.Analyzer {
 		log.Warn("LLM_API_KEY not set, falling back to local heuristic analyzer")
 		return analyzer.NewHeuristic()
 	}
-	log.Info("using llm analyzer", "model", cfg.LLMModel)
+	log.Info("using llm analyzer", "model", cfg.LLMModel, "base_url", cfg.LLMBaseURL, "json_mode", cfg.LLMJSONMode)
 	return analyzer.NewHTTP(analyzer.HTTPConfig{
 		APIKey:      cfg.LLMAPIKey,
 		Model:       cfg.LLMModel,
 		BaseURL:     cfg.LLMBaseURL,
 		Timeout:     cfg.AnalyzeTimeout,
 		MaxAttempts: 3,
+		MaxTokens:   2048,
+		JSONMode:    cfg.LLMJSONMode,
 	})
 }
 

@@ -1,4 +1,4 @@
-﻿# 部署与运行
+# 部署与运行
 
 ## 本地开发
 
@@ -61,6 +61,29 @@ ANALYZE_TIMEOUT=25s
 
 启动时校验必填项，缺 `LLM_API_KEY` 就立刻退出并说明缺哪个，
 不要等到第一个请求才 500。
+
+## LLM 配置
+
+用 DeepSeek 时：
+
+```bash
+LLM_API_KEY=sk-xxxxxxxx
+LLM_MODEL=deepseek-flash
+LLM_BASE_URL=https://api.deepseek.com
+LLM_JSON_MODE=true
+```
+
+几点实现上的约束，都是查文档确认过的：
+
+- `LLM_BASE_URL` 填 `https://api.deepseek.com`。该地址同时接受
+  `/chat/completions` 和 `/v1/chat/completions`，两种都能用。
+- `LLM_JSON_MODE=true` 会发送 `response_format: {"type":"json_object"}`。
+  DeepSeek 的 JSON Output 要求 prompt 里出现 "json" 字样并提供格式示例，
+  系统提示词已满足；换成不支持该参数的兼容服务时设为 false。
+- `max_tokens` 设成 2048 而不是更小。JSON 被中途截断会直接导致解析失败，
+  文档也提示要留足额度。
+- DeepSeek 文档说明 JSON Output 偶尔返回空 content，所以空响应必须
+  触发重试。这一条有对应的测试。
 
 ## 迁移
 

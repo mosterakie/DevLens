@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -23,6 +24,8 @@ type Config struct {
 	LLMAPIKey  string
 	LLMModel   string
 	LLMBaseURL string
+	// LLMJSONMode 开启后请求服务端保证输出合法 JSON。
+	LLMJSONMode bool
 
 	AnalyzeTimeout time.Duration
 
@@ -42,8 +45,9 @@ func Load() (*Config, error) {
 		Port:        env("PORT", "8080"),
 		LogLevel:    env("LOG_LEVEL", "info"),
 		LLMAPIKey:   env("LLM_API_KEY", ""),
-		LLMModel:    env("LLM_MODEL", "gpt-4o-mini"),
-		LLMBaseURL:  env("LLM_BASE_URL", "https://api.openai.com/v1"),
+		LLMModel:    env("LLM_MODEL", "deepseek-flash"),
+		LLMBaseURL:  env("LLM_BASE_URL", "https://api.deepseek.com"),
+		LLMJSONMode: envBool("LLM_JSON_MODE", true),
 	}
 
 	var err error
@@ -71,6 +75,18 @@ func env(key, def string) string {
 		return v
 	}
 	return def
+}
+
+func envBool(key string, def bool) bool {
+	v := strings.ToLower(strings.TrimSpace(os.Getenv(key)))
+	switch v {
+	case "1", "true", "yes", "on":
+		return true
+	case "0", "false", "no", "off":
+		return false
+	default:
+		return def
+	}
 }
 
 func envInt(key string, def int) (int, error) {

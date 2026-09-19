@@ -38,8 +38,30 @@ go run ./cmd/worker   # 无端口
 
 配置见 `.env.example`。
 
+### 配 LLM
+
 `LLM_API_KEY` 留空时 worker 会退回本地的启发式分析器（关键词匹配）。
 这样整条链路在没有外部依赖的情况下也能端到端跑通，便于本地开发和验收。
+
+接真实模型时，在 `.env` 里填：
+
+```bash
+LLM_API_KEY=sk-xxxxxxxx
+LLM_MODEL=deepseek-flash
+LLM_BASE_URL=https://api.deepseek.com
+LLM_JSON_MODE=true
+```
+
+key 从 https://platform.deepseek.com/api_keys 获取。
+
+`LLM_BASE_URL` 用 `https://api.deepseek.com`，它同时兼容
+`/chat/completions` 和 `/v1/chat/completions` 两种路径。
+
+`LLM_JSON_MODE=true` 会让服务端保证输出合法 JSON。DeepSeek 的 JSON Output
+要求 prompt 里出现 "json" 字样并给出格式示例，系统提示词已经满足。
+如果换成不支持该参数的兼容服务，设为 `false`。
+
+`.env` 已在 `.gitignore` 里，不会被提交。
 
 ## 试一下
 
