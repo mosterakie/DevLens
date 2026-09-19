@@ -64,7 +64,7 @@ const MESSAGES = {
     'list.col.title': '标题',
     'list.col.severity': '严重程度',
     'list.col.status': '状态',
-    'list.col.category': '分类',
+    'list.col.tags': '标签',
     'list.failed': '加载失败。',
 
     'detail.notfound': 'URL 里没有 Incident ID。',
@@ -150,7 +150,7 @@ const MESSAGES = {
     'list.col.title': 'Title',
     'list.col.severity': 'Severity',
     'list.col.status': 'Status',
-    'list.col.category': 'Category',
+    'list.col.tags': 'Tags',
     'list.failed': 'Failed to load incidents.',
 
     'detail.notfound': 'No incident id in the URL.',

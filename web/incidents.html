@@ -106,7 +106,7 @@
     const htr = el('tr');
     [
       I.t('list.col.id'), I.t('list.col.title'), I.t('list.col.severity'),
-      I.t('list.col.status'), I.t('list.col.category'), '',
+      I.t('list.col.status'), I.t('list.col.tags'), '',
     ].forEach(h => htr.appendChild(el('th', null, h)));
     thead.appendChild(htr);
     table.appendChild(thead);
@@ -114,6 +114,11 @@
     const tbody = el('tbody');
     all.forEach(inc => {
       const tr = el('tr');
+      tr.className = 'row';
+      tr.tabIndex = 0;
+      // 整行可点。ID 仍然渲染成链接，这样中键、右键"在新标签打开"、
+      // 复制链接都还能用；行点击只是把命中区域扩大到整行。
+      tr.dataset.href = 'detail.html?id=' + inc.id;
 
       const idTd = el('td');
       idTd.appendChild(linkIncident(inc.id));
@@ -129,6 +134,7 @@
       stTd.appendChild(statusBadge(inc.status));
       tr.appendChild(stTd);
 
+      // 模型的自由文本标签，不做归一化。
       tr.appendChild(el('td', null, inc.category || '—'));
 
       const flagTd = el('td');
@@ -136,6 +142,23 @@
       tr.appendChild(flagTd);
 
       tbody.appendChild(tr);
+    });
+
+    // 行点击与键盘操作。
+    //
+    // 点在链接上时让浏览器自己处理，避免插入一条重复的历史记录。
+    tbody.addEventListener('click', (e) => {
+      if (e.target.closest('a')) return;
+      const row = e.target.closest('tr[data-href]');
+      if (row) location.href = row.dataset.href;
+    });
+    tbody.addEventListener('keydown', (e) => {
+      if (e.key !== 'Enter' && e.key !== ' ') return;
+      if (e.target.closest('a')) return;
+      const row = e.target.closest('tr[data-href]');
+      if (!row) return;
+      e.preventDefault();
+      location.href = row.dataset.href;
     });
     table.appendChild(tbody);
 
