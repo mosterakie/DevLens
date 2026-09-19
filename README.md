@@ -24,6 +24,7 @@ POST /analyze ──> 归一化 ──> 指纹 ──> 查同类 ──> 入库 
 需要 PostgreSQL 和 Redis。用 Docker 的话：
 
 ```bash
+docker build -t devlens:local .
 docker compose up -d
 ```
 
@@ -94,11 +95,20 @@ curl http://127.0.0.1:8080/api/v1/incidents/1
 ## 开发
 
 ```bash
-go test ./...              # 单元测试
+go test -short ./...       # 单元测试
+go test ./...              # 含集成测试，需要 PostgreSQL
 go vet ./...
 gofmt -l .
 node scripts/check-i18n.js # 界面词条完整性
 ```
+
+集成测试需要一个专用的测试库（默认 `devlens_test`）：
+
+```bash
+createdb -O devlens devlens_test
+```
+
+它每次都会清空该库的全部表，所以库名不以 `_test` 结尾时会直接拒绝运行。
 
 界面支持中英双语，默认跟随浏览器，可在页头切换。诊断内容也会用同一种
 语言生成：提交时的语言记入 `incidents.lang`，worker 读取它来构造提示词。

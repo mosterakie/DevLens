@@ -1,4 +1,4 @@
-﻿# DevLens 设计文档
+# DevLens 设计文档
 
 记录 DevLens 的设计决策和理由。每一份回答一个问题，
 重点写清楚"选了什么、放弃了什么"。
@@ -15,5 +15,6 @@
 | [08-testing](./08-testing.md) | 测试策略 |
 | [09-deployment](./09-deployment.md) | 运行与部署 |
 | [10-roadmap](./10-roadmap.md) | 里程碑 |
+| [11-verification](./11-verification.md) | 实际验证记录与发现的问题 |
 
 文档是快照。代码和文档不一致时，改其中一边，不要让两者长期偏离。

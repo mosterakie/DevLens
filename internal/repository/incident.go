@@ -45,8 +45,15 @@ func (r *IncidentRepo) Create(ctx context.Context, in CreateIncidentInput) (*dom
 			RETURNING id, title, raw_log, normalized, fingerprint, severity,
 			          category, status, is_recurring, lang, created_by, created_at, updated_at`
 
+		// 语言在这里兜底，而不是只依赖调用方。
+		// 空字符串会绕过数据库的 DEFAULT，写进一条语言未定义的记录。
+		lang := in.Lang
+		if !lang.IsValid() {
+			lang = domain.DefaultLang()
+		}
+
 		inc, err := scanIncident(tx.QueryRow(ctx, q,
-			in.RawLog, in.Normalized, in.Fingerprint, in.CreatedBy, string(in.Lang)))
+			in.RawLog, in.Normalized, in.Fingerprint, in.CreatedBy, string(lang)))
 		if err != nil {
 			return fmt.Errorf("insert incident: %w", err)
 		}

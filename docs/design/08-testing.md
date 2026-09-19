@@ -1,4 +1,4 @@
-﻿# 测试
+# 测试
 
 原则是优先覆盖三类东西：纯逻辑（fingerprint、状态机、LLM 响应解析）、
 容易出错的集成点（事务、幂等）、关键路径的端到端。
@@ -109,10 +109,14 @@ markdown fence 那项是实际中最常遇到的 —— LLM 很爱在 JSON 外�
 ## 命令
 
 ```bash
-go test ./...                     # 单元
-go test -race ./...               # 竞态检测，需要 gcc
-go test -tags=integration ./...   # 集成，需要 docker
+go test -short ./...    # 只跑单元测试
+go test ./...           # 全部（含集成，需要 PostgreSQL）
+node scripts/check-i18n.js
 ```
+
+集成测试默认连接 `devlens_test` 库，用 `TEST_DATABASE_URL` 覆盖。
+测试会清空全部表，所以库名不以 `_test` 结尾时会拒绝运行 ——
+本机可能同时存在其他项目的真实数据库。
 
 `-race` 需要 CGO 和一个 C 编译器。Windows 开发机上如果没有 gcc，
 本地跑不了，这条要在 CI 里保证执行 —— api 和 worker 共享代码，
