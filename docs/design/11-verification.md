@@ -16,18 +16,23 @@
 ## 测试规模
 
 ```
-112 个测试，全绿
-├── 单元：93 个
+145 个测试，全绿
+├── 单元：114 个
 │   ├── fingerprint   幂等性、反向断言、边界
 │   ├── domain        状态机、语言解析、置信度降级
 │   ├── analyzer      响应解析、围栏剥离、截断、重试
 │   ├── service       提交流程、同类判定（假仓储）
 │   ├── handler       语言协商
-│   └── metrics       指标渲染
-└── 集成：19 个（internal/repository，需要真实 PostgreSQL）
+│   ├── metrics       指标渲染
+│   ├── config        .env 解析与优先级
+│   ├── migrate       迁移文件加载与校验
+│   └── usecases      真实日志样本上的归一化
+└── 集成：31 个（需要真实 PostgreSQL）
+    ├── repository    事务回滚、幂等、游标分页、级联删除
+    └── migrate       迁移幂等、失败回滚、校验和、baseline
 ```
 
-集成测试用 `devlens_test` 库，跑完约 3.8 秒。`go test -short` 跳过。
+集成测试用 `devlens_test` 库，跑完约 4 秒。`go test -short` 跳过。
 
 ## 集成测试覆盖的约束
 
@@ -108,6 +113,43 @@ Dockerfile 里原先注释写"distroless 默认非 root"——**这个说法是�
 
 修复：识别 `finish_reason == "length"` 并立即失败；默认值提到 4096；
 提示词要求简洁输出。
+
+### 7. 迁移加载器把 down 脚本当成命名错误
+
+`internal/migrate` 的 `Load` 只判断了"是否以 `.sql` 结尾"，没排除
+`.down.sql`，于是合法的 down 脚本被当成"命名不合规范"直接报错。
+
+这个错误在仓库里必然触发——`migrations/` 下就有三个 down 文件，
+意味着服务启动时就会挂。是测试抓出来的，见 `TestLoadIgnoresDownFiles`
+和 `TestRepoMigrationsAreValid`。
+
+修复：先排除 `.down.sql`，其余的 `.sql` 才视为命名不规范。
+
+### 8. 升级路径缺失：手动建库的环境启动失败
+
+迁移系统实现后第一次在已有库上启动，直接崩了：
+
+```
+fatal: 执行 0001_init.up.sql 失败: 类型 "severity_t" 已经存在
+```
+
+这不是 bug，是**升级路径没有设计**。任何用户如果先用旧版本手动执行过
+`psql -f migrations/*.up.sql`，再升级到带自动迁移的版本，都会遇到。
+
+修复：新增 baseline 机制，把已有库标记为已应用某个版本。写入前先校验
+必须存在的表——空库上执行会被拒绝，因为把空库标成"已迁移"会让后续
+迁移建立在错误前提上，而且报错会出现在很久以后。
+
+实测在保留 17 条数据的库上完成 baseline，之后 api 启动日志显示
+"数据库结构已是最新"，检查耗时 4ms。
+
+### 9. devcheck 的环境变量优先级与主程序相反
+
+`cmd/devcheck` 只读 `.env` 而忽略进程环境变量，而 `config.Load` 的
+优先级是"真实环境变量 > `.env`"。后果是用环境变量覆盖配置时，
+devcheck 检查的是**错误的库**。
+
+修复：抽一个 `lookup` 函数，与 `config.Load` 使用相同的优先级。
 
 ## Docker 镜像验证
 
