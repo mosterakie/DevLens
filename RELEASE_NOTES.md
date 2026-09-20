@@ -37,6 +37,10 @@ go run ./cmd/worker            # 另一个窗口
 配置见 `.env.example`，复制成 `.env` 即可，两个进程启动时都会读取。
 真实环境变量优先于文件内容。
 
+数据库迁移会在 api 与 worker 启动时自动执行，不需要手动跑 SQL。
+如果库的结构是以前手动建的，先跑一次
+`go run ./cmd/devcheck -baseline <版本>` 把它接入迁移系统。
+
 ## 技术要点
 
 - Go 1.27，Gin + pgx + go-redis，PostgreSQL 与 Redis
