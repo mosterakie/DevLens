@@ -61,6 +61,14 @@ func (db *DB) Ping(ctx context.Context) error {
 	return db.pool.Ping(ctx)
 }
 
+// Pool 返回底层连接池。
+//
+// 暴露它是为了让 migrate 包能在同一个池上执行迁移，
+// 避免为迁移另外建一个连接。常规数据访问仍应走各 Repo。
+func (db *DB) Pool() *pgxpool.Pool {
+	return db.pool
+}
+
 // Query 执行查询，供 worker 的兜底扫描等场景使用。
 // 常规的数据访问仍应放在各 Repo 里。
 func (db *DB) Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error) {

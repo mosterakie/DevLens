@@ -29,6 +29,10 @@ POST /analyze ──> 归一化 ──> 指纹 ──> 查同类 ──> 入库 
 go run ./cmd/devcheck
 ```
 
+数据库迁移会在 api 与 worker 启动时自动执行，不需要手动跑 SQL。
+如果库的结构是以前手动建的，先跑一次
+`go run ./cmd/devcheck -baseline <版本>` 把它接入迁移系统。
+
 它会检查 PostgreSQL 与 Redis 是否在跑、`.env` 是否就绪、api 端口是否空闲
 （被占用时给出替代端口）。全部通过后再启动：
 

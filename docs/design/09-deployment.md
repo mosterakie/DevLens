@@ -96,12 +96,49 @@ LLM_JSON_MODE=true
 
 ## 迁移
 
+api 与 worker 启动时都会应用迁移，用 PostgreSQL 的 advisory lock
+保证多实例同时启动时只有一个真正执行，其余等待后直接跳过。
+
+`internal/migrate` 是手写的，没有引入 golang-migrate：需求很窄——按
+文件名顺序执行 up 脚本并记录版本，为此多一个依赖和它自己的一套约定
+（如 dirty 状态处理）不值得。
+
+### 几处刻意的设计
+
+**整个迁移在一个事务里执行。** PostgreSQL 支持事务性 DDL，所以迁移
+失败时结构不会被改一半、版本也不会被误记。失败的那条会完全回滚，
+下次重试从头来。
+
+**记录校验和。** `schema_migrations` 存了每个迁移内容的 SHA-256 前缀。
+改了已应用的迁移再启动会报 `ErrChecksumMismatch`，而不是静默地让不同
+环境的结构分叉。要改结构就新增一个迁移文件。
+
+**只执行 `*.up.sql`，且命名必须匹配 `NNNN_name.up.sql`。** 命名不合规
+的 `.sql` 文件会直接报错而不是被忽略——静默忽略会让"以为加了迁移但
+其实没生效"变成很难查的问题。
+
+### 从手动建库升级
+
+如果库的结构是手动执行 `psql -f migrations/*.up.sql` 建的，没有
+`schema_migrations` 记录，直接启动会失败（`CREATE TYPE` 之类的语句
+遇到已存在的对象会报错）。这时需要把库标记为已应用某个版本：
+
 ```bash
-migrate -path ./migrations -database "$DATABASE_URL" up
+go run ./cmd/devcheck -baseline 3
 ```
 
-迁移在 api 启动时自动执行，用 advisory lock 防止多实例并发迁移。
-生产环境更稳妥的做法是独立 job。
+它会先校验结构——检查若干必须存在的表——通过后才写入记录。空库上
+执行会被拒绝，因为把空库标成"已迁移"会让后续迁移建立在错误前提上，
+而且报错会出现在很久以后。
+
+确实需要跳过校验时加 `--force`，但这只应用于你清楚知道结构状态的
+情况。
+
+### 生产环境
+
+启动时自动迁移适合单实例或滚动更新。如果发布流程要求迁移与代码部署
+分离，把 `migrations/` 交给独立的 job 执行即可——`go run ./cmd/devcheck`
+也会报告迁移状态，可以当作部署前的检查步骤。
 
 ## Dockerfile
 

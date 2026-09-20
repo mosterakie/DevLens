@@ -11,6 +11,7 @@ import (
 
 	"github.com/mosterakie/DevLens/internal/analyzer"
 	"github.com/mosterakie/DevLens/internal/config"
+	"github.com/mosterakie/DevLens/internal/migrate"
 	"github.com/mosterakie/DevLens/internal/queue"
 	"github.com/mosterakie/DevLens/internal/repository"
 	"github.com/mosterakie/DevLens/internal/worker"
@@ -39,6 +40,12 @@ func run(log *slog.Logger) error {
 		return err
 	}
 	defer db.Close()
+
+	// 与 api 一样在启动时检查迁移。谁先启动谁真正执行，
+	// migrate 内部用 advisory lock 串行化。
+	if err := applyMigrations(ctx, db, log); err != nil {
+		return err
+	}
 
 	q, err := queue.New(ctx, cfg.RedisAddr, cfg.RedisPass, cfg.RedisDB)
 	if err != nil {
@@ -88,6 +95,27 @@ func chooseAnalyzer(cfg *config.Config, log *slog.Logger) analyzer.Analyzer {
 		MaxTokens:   cfg.LLMMaxTokens,
 		JSONMode:    cfg.LLMJSONMode,
 	})
+}
+
+// migrationDir 与 api 保持一致。
+const migrationDir = "migrations"
+
+func applyMigrations(ctx context.Context, db *repository.DB, log *slog.Logger) error {
+	if _, err := os.Stat(migrationDir); err != nil {
+		log.Warn("未找到迁移目录，跳过迁移", "dir", migrationDir)
+		return nil
+	}
+
+	migrations, err := migrate.Load(migrationDir)
+	if err != nil {
+		return err
+	}
+
+	runner := migrate.New(db.Pool(), log)
+	if err := runner.Apply(ctx, migrations); err != nil {
+		return err
+	}
+	return nil
 }
 
 func newLogger() *slog.Logger {

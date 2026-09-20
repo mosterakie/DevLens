@@ -17,6 +17,7 @@ import (
 	"github.com/mosterakie/DevLens/internal/handler"
 	"github.com/mosterakie/DevLens/internal/metrics"
 	"github.com/mosterakie/DevLens/internal/middleware"
+	"github.com/mosterakie/DevLens/internal/migrate"
 	"github.com/mosterakie/DevLens/internal/queue"
 	"github.com/mosterakie/DevLens/internal/repository"
 	"github.com/mosterakie/DevLens/internal/service"
@@ -44,6 +45,12 @@ func run(log *slog.Logger) error {
 	}
 	defer db.Close()
 	log.Info("connected to postgres")
+
+	// 启动时应用迁移。api 与 worker 都可能先启动，所以两边都调用；
+	// migrate 内部用 advisory lock 保证只有一个真正执行。
+	if err := applyMigrations(ctx, db, log); err != nil {
+		return err
+	}
 
 	q, err := queue.New(ctx, cfg.RedisAddr, cfg.RedisPass, cfg.RedisDB)
 	if err != nil {
@@ -103,6 +110,37 @@ func run(log *slog.Logger) error {
 
 	<-shutdownDone
 	log.Info("stopped")
+	return nil
+}
+
+// migrationDir 是迁移文件所在目录。
+//
+// 相对路径：容器里 WORKDIR 是 /app，migrations 一并复制到那里；
+// 本地开发时工作目录就是仓库根。
+const migrationDir = "migrations"
+
+// applyMigrations 读取并应用迁移。
+//
+// 目录不存在时跳过，便于只跑集成测试的场景。
+func applyMigrations(ctx context.Context, db *repository.DB, log *slog.Logger) error {
+	if _, err := os.Stat(migrationDir); err != nil {
+		log.Warn("未找到迁移目录，跳过迁移", "dir", migrationDir)
+		return nil
+	}
+
+	migrations, err := migrate.Load(migrationDir)
+	if err != nil {
+		return err
+	}
+
+	runner := migrate.New(db.Pool(), log)
+	start := time.Now()
+	if err := runner.Apply(ctx, migrations); err != nil {
+		return err
+	}
+	log.Info("迁移检查完成",
+		"total", len(migrations),
+		"duration_ms", time.Since(start).Milliseconds())
 	return nil
 }
 
