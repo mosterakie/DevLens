@@ -17,4 +17,6 @@
 | [10-roadmap](./10-roadmap.md) | 里程碑 |
 | [11-verification](./11-verification.md) | 实际验证记录与发现的问题 |
 
+接口契约见 [`docs/openapi.yaml`](../openapi.yaml)。
+
 文档是快照。代码和文档不一致时，改其中一边，不要让两者长期偏离。

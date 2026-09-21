@@ -59,6 +59,12 @@ jobs:
       - name: 界面词条完整性
         run: node scripts/check-i18n.js
 
+      - name: OpenAPI 与实际路由一致
+        # 只比对路径集合，不校验字段。完整的 schema 校验要引入解析器
+        # 并维护一套映射，成本不抵收益；但"加了接口忘了写文档"这类
+        # 最常见的不一致能被挡住。
+        run: node scripts/check-openapi.js
+
   integration:
     name: 集成测试
     runs-on: ubuntu-latest

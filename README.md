@@ -120,6 +120,7 @@ go test ./...              # 含集成测试，需要 PostgreSQL
 go vet ./...
 gofmt -l .
 node scripts/check-i18n.js # 界面词条完整性
+node scripts/check-openapi.js # OpenAPI 与实际路由一致
 ```
 
 `-race` 需要在 CI 中执行。Windows 上 Go 的 cgo 只支持 gcc 不支持 MSVC，

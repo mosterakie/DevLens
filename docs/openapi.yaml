@@ -1,0 +1,559 @@
+# DevLens API
+#
+# 这份文件是接口契约，改动接口时必须同步更新。
+# CI 会比对这里声明的路径与实际注册的路由，不一致就失败——
+# 但它只检查路径集合，不校验字段，所以字段也要人工保持同步。
+#
+# 有几处行为不符合直觉，容易在实现或消费时出错，标注在对应位置：
+#   - 提交分析返回 202 而不是 200
+#   - 分析未完成时 details 返回 200 且 analysis 为 null，不是 404 也不是 425
+#   - 列表用游标分页而不是 offset
+#   - 请求体超过上限返回 413，与字段长度错误（400）区分开
+openapi: 3.0.3
+
+info:
+  title: DevLens API
+  description: |
+    粘贴错误日志，得到结构化诊断，并找出历史上出现过的同类问题。
+
+    诊断是异步的：提交后立刻返回一个 id，AI 分析在队列里进行，
+    客户端轮询详情接口直到 `analysis` 非空。
+
+    日志在交给模型之前会被脱敏（密码、token、密钥等凭据），
+    存库的也是脱敏后的版本。
+  version: 0.1.0
+
+servers:
+  - url: http://127.0.0.1:8080
+    description: 本地开发
+
+tags:
+  - name: incidents
+    description: 错误记录与诊断
+  - name: ops
+    description: 运维端点
+
+paths:
+  /api/v1/incidents/analyze:
+    post:
+      tags: [incidents]
+      summary: 提交日志并开始分析
+      description: |
+        同步完成的部分：长度校验、脱敏、计算指纹、查找同类、入库、入队。
+        AI 诊断在 worker 里异步进行。
+
+        返回 202 而不是 200——记录已接受，但诊断还没出来。
+        `related_incident_ids` 此时已经有值，因为指纹匹配是同步的。
+
+        日志字段限 64KB。请求体上限 256KB（之所以更大，是因为 JSON
+        转义会让换行变成 `\n`，占两个字符）。
+      parameters:
+        - name: lang
+          in: query
+          required: false
+          description: |
+            诊断内容的语言。省略时读 `Accept-Language` 头，再退回默认的
+            简体中文。无法识别的值一律退回默认值，不会报错。
+          schema:
+            type: string
+            enum: [zh-Hans, en]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [log]
+              properties:
+                log:
+                  type: string
+                  description: 原始错误日志或 stack trace。提交前会被脱敏。
+                  minLength: 100
+                  maxLength: 65536
+            example:
+              log: |
+                2026-09-18 14:32:51
+                POST /api/payment
+                ERROR: context deadline exceeded
+                goroutine 231 [IO wait]:
+                database/sql.(*DB).conn(...)
+      responses:
+        '202':
+          description: 已接受，分析进行中
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AnalyzeResponse'
+        '400':
+          description: |
+            日志为空、过短或过长（code 为 `INVALID_LOG`），
+            或请求体不是合法 JSON（code 为 `INVALID_REQUEST`）。
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '413':
+          description: |
+            请求体超过 256KB。与 400 区分开：格式没问题，只是太大了。
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PayloadTooLargeError'
+        '429':
+          description: 触发限流。默认 10 次/分钟/IP，全局 200 次/分钟。
+          headers:
+            Retry-After:
+              description: 建议等待的秒数
+              schema:
+                type: integer
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /api/v1/incidents:
+    get:
+      tags: [incidents]
+      summary: 列出错误记录
+      description: |
+        用游标分页而不是 offset。记录持续新增，offset 分页在列表头部
+        插入新数据时会漏掉条目。
+      parameters:
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum: [ANALYZING, OPEN, INVESTIGATING, RESOLVED, FAILED]
+        - name: severity
+          in: query
+          schema:
+            type: string
+            enum: [LOW, MEDIUM, HIGH, CRITICAL]
+        - name: limit
+          in: query
+          description: 默认 20，最大 100
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+        - name: cursor
+          in: query
+          description: 上一页返回的 `next_cursor`，不透明字符串
+          schema:
+            type: string
+      responses:
+        '200':
+          description: 列表
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Incident'
+                  next_cursor:
+                    type: string
+                    description: 没有更多时省略
+        '400':
+          description: 过滤参数非法
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+
+  /api/v1/incidents/{id}:
+    get:
+      tags: [incidents]
+      summary: 查询详情（轮询用）
+      description: |
+        分析未完成时返回 **200** 且 `analysis` 为 `null`，不是 404，
+        也不是 425。这样前端轮询不必处理异常分支。
+      parameters:
+        - $ref: '#/components/parameters/IncidentID'
+      responses:
+        '200':
+          description: 详情
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Incident'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+
+  /api/v1/incidents/{id}/related:
+    get:
+      tags: [incidents]
+      summary: 同类问题
+      description: |
+        按指纹匹配，与提交时的同类判定走同一套逻辑。不是"分类相同"，
+        是"归一化后本质相同"。
+
+        没有同类时返回空数组，不是 null。
+      parameters:
+        - $ref: '#/components/parameters/IncidentID'
+      responses:
+        '200':
+          description: 同类记录
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/RelatedIncident'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /api/v1/incidents/{id}/events:
+    get:
+      tags: [incidents]
+      summary: 状态变更时间线
+      parameters:
+        - $ref: '#/components/parameters/IncidentID'
+      responses:
+        '200':
+          description: 事件流，按时间正序
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Event'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /api/v1/incidents/{id}/status:
+    patch:
+      tags: [incidents]
+      summary: 变更状态
+      description: |
+        状态机：
+
+        ```
+        ANALYZING ──┬──> OPEN ──> INVESTIGATING ──> RESOLVED
+                    └──> FAILED ──(重试)──> ANALYZING
+        ```
+
+        非法转移返回 409。`RESOLVED` 是终态。
+
+        做成子资源而不是 `PATCH /incidents/{id}`，是因为状态转移有副作用
+        （校验合法性、写事件），与改标题这类幂等更新不是一回事。
+      parameters:
+        - $ref: '#/components/parameters/IncidentID'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status:
+                  $ref: '#/components/schemas/Status'
+      responses:
+        '200':
+          description: 变更后的记录
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Incident'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: 非法状态转移
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /healthz:
+    get:
+      tags: [ops]
+      summary: 存活检查
+      description: |
+        只表示进程在跑，不检查依赖。数据库短暂不可用不该导致容器被杀。
+      responses:
+        '200':
+          description: 存活
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: ok
+
+  /readyz:
+    get:
+      tags: [ops]
+      summary: 就绪检查
+      description: |
+        检查 PostgreSQL 与 Redis 连通性。不健康时返回 503——
+        编排系统据此把流量摘走，而不是重启容器。
+      responses:
+        '200':
+          description: 就绪
+        '503':
+          description: 依赖不可用，响应体含具体是哪个
+
+  /metrics:
+    get:
+      tags: [ops]
+      summary: Prometheus 指标
+      description: |
+        文本格式。包含请求计数、耗时直方图与队列积压。
+
+        计数用路由模板作为标签（`/incidents/:id` 而非具体值），
+        避免标签基数随数据量增长。
+
+        生产环境应当只在内网暴露这个端点。
+      responses:
+        '200':
+          description: 指标文本
+          content:
+            text/plain:
+              schema:
+                type: string
+
+components:
+  parameters:
+    IncidentID:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: integer
+        format: int64
+        minimum: 1
+
+  responses:
+    NotFound:
+      description: 记录不存在
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    RateLimited:
+      description: 触发限流
+      headers:
+        Retry-After:
+          schema:
+            type: integer
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+
+  schemas:
+    Status:
+      type: string
+      enum: [ANALYZING, OPEN, INVESTIGATING, RESOLVED, FAILED]
+      description: |
+        ANALYZING 表示已创建、等待分析；OPEN 表示分析完成待排查；
+        FAILED 表示分析失败，可以重试。
+
+    Severity:
+      type: string
+      enum: [LOW, MEDIUM, HIGH, CRITICAL]
+
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code:
+              type: string
+              description: |
+                程序判断用。前端靠它区分处理方式——
+                例如"被限流"与"日志格式不对"都是 4xx，但处理完全不同。
+              enum:
+                - INVALID_LOG
+                - INVALID_REQUEST
+                - NOT_FOUND
+                - INVALID_TRANSITION
+                - RATE_LIMITED
+                - PAYLOAD_TOO_LARGE
+                - INTERNAL
+            message:
+              type: string
+              description: 可直接展示给用户
+
+    PayloadTooLargeError:
+      allOf:
+        - $ref: '#/components/schemas/Error'
+        - type: object
+          properties:
+            error:
+              type: object
+              properties:
+                limit_bytes:
+                  type: integer
+                  description: 当前上限，前端可据此给出准确提示
+
+    AnalyzeResponse:
+      type: object
+      properties:
+        id:
+          type: integer
+          format: int64
+        status:
+          $ref: '#/components/schemas/Status'
+        is_recurring:
+          type: boolean
+          description: 是否出现过同指纹的记录
+        lang:
+          type: string
+          description: 实际使用的诊断语言
+        related_incident_ids:
+          type: array
+          items:
+            type: integer
+            format: int64
+          description: 提交时同步匹配到的同类记录
+        related_incidents:
+          type: array
+          items:
+            $ref: '#/components/schemas/RelatedIncident'
+        created_at:
+          type: string
+          format: date-time
+
+    Evidence:
+      type: object
+      description: |
+        引用日志中的一条具体证据。`source_line` 是行号，
+        用户可据此核对——这让诊断可证伪。
+      properties:
+        key:
+          type: string
+        value:
+          type: string
+          description: 日志原文片段
+        source_line:
+          type: integer
+
+    Analysis:
+      type: object
+      properties:
+        summary:
+          type: string
+        possible_causes:
+          type: array
+          description: |
+            候选原因列表，不是单一定论。AI 对日志的判断本质是猜测，
+            给一个"根因"会让用户误以为确定。
+          items:
+            type: string
+        evidence:
+          type: array
+          items:
+            $ref: '#/components/schemas/Evidence'
+        suggested_actions:
+          type: array
+          items:
+            type: string
+        confidence:
+          type: number
+          format: double
+          minimum: 0
+          maximum: 1
+          description: |
+            模型自评置信度。会随信息量波动：证据充分时 0.8 以上，
+            日志信息不足时降到 0.4 并说明缺什么。
+        model:
+          type: string
+        prompt_version:
+          type: string
+          description: prompt 的版本，便于按版本比较效果
+
+    Incident:
+      type: object
+      properties:
+        id:
+          type: integer
+          format: int64
+        title:
+          type: string
+        raw_log:
+          type: string
+          description: |
+            已脱敏的日志。服务端不保留明文——脱敏发生在交给模型之前，
+            存库的就是脱敏后的版本。
+        status:
+          $ref: '#/components/schemas/Status'
+        severity:
+          allOf:
+            - $ref: '#/components/schemas/Severity'
+          nullable: true
+          description: 分析完成前为 null
+        category:
+          type: string
+          description: |
+            模型的自由文本归纳，格式不统一。界面上称它为"标签"而不是
+            "分类"——后者会让人以为背后有受控词表。不适合当过滤条件。
+        is_recurring:
+          type: boolean
+        lang:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+        analysis:
+          allOf:
+            - $ref: '#/components/schemas/Analysis'
+          nullable: true
+          description: 分析未完成时为 null（此时仍是 200）
+
+    RelatedIncident:
+      type: object
+      properties:
+        id:
+          type: integer
+          format: int64
+        title:
+          type: string
+        severity:
+          allOf:
+            - $ref: '#/components/schemas/Severity'
+          nullable: true
+        status:
+          $ref: '#/components/schemas/Status'
+        created_at:
+          type: string
+          format: date-time
+
+    Event:
+      type: object
+      properties:
+        event_type:
+          type: string
+          enum: [created, analysis_completed, analysis_failed, status_changed]
+        from_status:
+          allOf:
+            - $ref: '#/components/schemas/Status'
+          nullable: true
+        to_status:
+          allOf:
+            - $ref: '#/components/schemas/Status'
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
