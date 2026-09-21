@@ -37,6 +37,12 @@ type relatedIncidentDTO struct {
 	Severity  *string       `json:"severity"`
 	Status    domain.Status `json:"status"`
 	CreatedAt time.Time     `json:"created_at"`
+	// Match 说明这项是"确定同类"（exact）还是"可能同类"（similar）。
+	//
+	// 必须透传：05-related-incidents.md 的核心诉求是不能让用户看到
+	// "错误的相关历史"，所以 UI 必须能区分两者的可信度 ——
+	// 只给一个混合列表而看不出差别，等于把推测当事实呈现。
+	Match string `json:"match"`
 }
 
 type analyzeResponse struct {
@@ -142,6 +148,7 @@ func (h *IncidentHandler) Analyze(c *gin.Context) {
 			Severity:  severityPtrFromPtr(r.Severity),
 			Status:    r.Status,
 			CreatedAt: r.CreatedAt,
+			Match:     r.Match,
 		})
 	}
 
@@ -264,6 +271,7 @@ func (h *IncidentHandler) Related(c *gin.Context) {
 			Severity:  severityPtrFromPtr(r.Severity),
 			Status:    r.Status,
 			CreatedAt: r.CreatedAt,
+			Match:     r.Match,
 		})
 	}
 

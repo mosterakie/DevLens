@@ -148,16 +148,9 @@
       }
       box.className = 'panel';
       box.innerHTML = '';
-      const ul = el('ul', 'plain');
-      items.forEach(o => {
-        const li = el('li');
-        li.appendChild(linkIncident(o.id));
-        li.appendChild(document.createTextNode(' ' + (o.title || '')));
-        if (o.severity) li.appendChild(document.createTextNode(' · ' + o.severity));
-        if (o.status) li.appendChild(document.createTextNode(' · ' + o.status));
-        ul.appendChild(li);
-      });
-      box.appendChild(ul);
+      // 匹配原因（exact / similar）由共用渲染器加标记，
+      // 避免 analyze 页与 detail 页出现不同的展示。
+      box.appendChild(renderRelatedList(items));
     } catch (err) {
       box.className = 'panel empty';
       box.textContent = I.t('result.relatedfailed');

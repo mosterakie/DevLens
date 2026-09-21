@@ -257,15 +257,8 @@
 
     if (data.related_incidents && data.related_incidents.length) {
       resultEl.appendChild(el('h3', null, I.t('result.related')));
-      const ul = el('ul', 'plain');
-      data.related_incidents.forEach(r => {
-        const li = el('li');
-        li.appendChild(linkIncident(r.id));
-        li.appendChild(document.createTextNode(' ' + (r.title || '')));
-        if (r.severity) li.appendChild(document.createTextNode(' · ' + r.severity));
-        ul.appendChild(li);
-      });
-      resultEl.appendChild(ul);
+      // 共用渲染器会带上 match 标记，让用户分清"确定同类"与"可能同类"。
+      resultEl.appendChild(renderRelatedList(data.related_incidents));
     }
   }
 

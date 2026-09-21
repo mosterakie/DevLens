@@ -56,8 +56,12 @@ const MESSAGES = {
     'result.line': '第 {n} 行',
     'result.view': '查看 Incident',
     'result.failed.note': '分析失败。原始日志仍然保留，可以重试。',
-    'result.norelated': '没有其他记录与它的指纹相同。',
+    'result.norelated': '没有找到与它相近的历史问题。',
     'result.relatedfailed': '无法加载同类问题。',
+    // 匹配原因。文案必须让用户分得清"确定"与"推测"：
+    // 精确命中是同一指纹，相似命中只是措辞接近，可信度不同。
+    'result.match.exact': '指纹相同',
+    'result.match.similar': '措辞相近',
 
     'list.title': 'Incident 列表',
     'list.status': '全部状态',
@@ -148,8 +152,11 @@ const MESSAGES = {
     'result.line': 'line {n}',
     'result.view': 'View incident',
     'result.failed.note': 'Analysis failed. The raw log is still stored and can be retried.',
-    'result.norelated': 'No earlier incident shares this fingerprint.',
+    'result.norelated': 'No similar incident found in the history.',
     'result.relatedfailed': 'Could not load related incidents.',
+    // 匹配原因。文案必须让用户分得清"确定"与"推测"。
+    'result.match.exact': 'same fingerprint',
+    'result.match.similar': 'similar wording',
 
     'list.title': 'Incidents',
     'list.status': 'All statuses',

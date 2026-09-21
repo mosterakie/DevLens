@@ -83,6 +83,46 @@ function spinnerLine(text) {
   return wrap;
 }
 
+// relatedBadge 生成"匹配原因"小标记。
+//
+// 后端用 match 字段区分两种召回来源：exact 是同一指纹（确定同类），
+// similar 只是措辞接近（可能同类）。两者可信度不同，必须在界面上
+// 分开呈现 —— 把推测当事实展示，用户一旦发现就会失去对"相关历史"
+// 这个功能的信任。
+function relatedBadge(match) {
+  const I = window.DevLensI18n;
+  if (match === 'exact') {
+    return el('span', 'badge match-exact', I.t('result.match.exact'));
+  }
+  if (match === 'similar') {
+    return el('span', 'badge match-similar', I.t('result.match.similar'));
+  }
+  // 未知取值时不编造文案：宁可不显示标记，也不要写错。
+  return null;
+}
+
+// renderRelatedList 渲染一份"同类问题"列表。
+//
+// analyze 页与 detail 页共用：两处的排版要求一致，
+// 分开写必然出现某一处漏改字段（例如新增的 match 标记）。
+function renderRelatedList(items) {
+  const ul = el('ul', 'plain');
+  (items || []).forEach(r => {
+    const li = el('li');
+    li.appendChild(linkIncident(r.id));
+    li.appendChild(document.createTextNode(' ' + (r.title || '')));
+    if (r.severity) li.appendChild(document.createTextNode(' · ' + r.severity));
+    if (r.status) li.appendChild(document.createTextNode(' · ' + r.status));
+    const badge = relatedBadge(r.match);
+    if (badge) {
+      li.appendChild(document.createTextNode(' '));
+      li.appendChild(badge);
+    }
+    ul.appendChild(li);
+  });
+  return ul;
+}
+
 // renderAnalysis 渲染一份诊断结果，analyze 页和 detail 页共用。
 //
 // 两处的排版要求一致，分开写必然出现某一处漏改字段。

@@ -3,6 +3,7 @@ package worker
 import (
 	"context"
 	"errors"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -229,6 +230,132 @@ func TestHandlePassesRelatedSummaries(t *testing.T) {
 	}
 	if !strings.Contains(fa.calls[0].RelatedSummaries[0], "既有的同类问题") {
 		t.Errorf("摘要应当包含标题, got %q", fa.calls[0].RelatedSummaries[0])
+	}
+}
+
+// TestHandlePassesSimilarRelatedToModel 是改动 2 在 worker 侧的验收点。
+//
+// worker 拿不到 service（依赖方向是 worker→repository），所以它必须
+// 自己合并两路。如果漏了这一步，模型看不到"措辞不同但同类"的历史，
+// 诊断质量会与用户看到的相关历史脱节。
+func TestHandlePassesSimilarRelatedToModel(t *testing.T) {
+	db := setupDB(t)
+	ctx := context.Background()
+	repo := repository.NewIncidentRepo(db)
+
+	// 既有记录：归一化文本与待分析的记录高度相似，但指纹不同。
+	const oldNorm = "pubsub failed to dial postgres network tcp connection refused coderd failed to ping database"
+	old := seedIncident(t, db, "old raw", oldNorm, 0x71)
+	if err := repo.UpdateStatus(ctx, old.ID, domain.StatusOpen); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Pool().Exec(ctx,
+		`UPDATE incidents SET title = '历史数据库连接故障' WHERE id = $1`, old.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	// 待分析记录：措辞略变，指纹不同（0x72 != 0x71）。
+	const newNorm = "pubsub failed to dial postgres network tcp connection refused coderd database ping failed"
+	target := seedIncident(t, db, "new raw", newNorm, 0x72)
+
+	fa := &fakeAnalyzer{result: okResult("x")}
+	w := newWorker(t, db, fa, &fakeQueue{})
+	if err := w.Handle(ctx, target.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	if len(fa.calls) != 1 {
+		t.Fatalf("模型调用次数 = %d, want 1", len(fa.calls))
+	}
+	summaries := fa.calls[0].RelatedSummaries
+	if len(summaries) != 1 {
+		t.Fatalf("应当带上 1 条相似历史摘要, got %v", summaries)
+	}
+	if !strings.Contains(summaries[0], "历史数据库连接故障") {
+		t.Errorf("摘要应当包含标题, got %q", summaries[0])
+	}
+	// 必须标出这是"可能同类"，否则模型会把推测当事实参考。
+	if !strings.Contains(summaries[0], "可能同类") {
+		t.Errorf("相似命中应当在摘要里标注为可能同类, got %q", summaries[0])
+	}
+}
+
+// TestHandlePassesExactRelatedMarkedExact 确认精确命中在摘要里标成"确定同类"。
+func TestHandlePassesExactRelatedMarkedExact(t *testing.T) {
+	db := setupDB(t)
+	ctx := context.Background()
+	repo := repository.NewIncidentRepo(db)
+
+	first := seedIncident(t, db, "log a", "norm identical text", 0x73)
+	if err := repo.UpdateStatus(ctx, first.ID, domain.StatusOpen); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Pool().Exec(ctx,
+		`UPDATE incidents SET title = '确定的同类' WHERE id = $1`, first.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	second := seedIncident(t, db, "log b", "norm identical text", 0x73)
+
+	fa := &fakeAnalyzer{result: okResult("x")}
+	w := newWorker(t, db, fa, &fakeQueue{})
+	if err := w.Handle(ctx, second.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	summaries := fa.calls[0].RelatedSummaries
+	if len(summaries) != 1 {
+		t.Fatalf("应当带上 1 条摘要, got %v", summaries)
+	}
+	if !strings.Contains(summaries[0], "确定同类") {
+		t.Errorf("精确命中应当标注为确定同类, got %q", summaries[0])
+	}
+}
+
+// TestHandleExcludesSelfFromRelated 确认 worker 不会把记录自己喂给模型。
+func TestHandleExcludesSelfFromRelated(t *testing.T) {
+	db := setupDB(t)
+	ctx := context.Background()
+
+	target := seedIncident(t, db, "raw", "some normalized text", 0x74)
+
+	fa := &fakeAnalyzer{result: okResult("x")}
+	w := newWorker(t, db, fa, &fakeQueue{})
+	if err := w.Handle(ctx, target.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	prefix := "#" + strconv.FormatInt(target.ID, 10) + " "
+	for _, s := range fa.calls[0].RelatedSummaries {
+		if strings.HasPrefix(s, prefix) {
+			t.Errorf("记录自己不该出现在相关历史里: %q", s)
+		}
+	}
+}
+
+// TestHandleUnrelatedHasNoSummaries 确认无关历史不会被硬塞给模型。
+func TestHandleUnrelatedHasNoSummaries(t *testing.T) {
+	db := setupDB(t)
+	ctx := context.Background()
+	repo := repository.NewIncidentRepo(db)
+
+	first := seedIncident(t, db,
+		"panic: runtime error: invalid memory address or nil pointer dereference",
+		"panic runtime error invalid memory address nil pointer dereference goroutine running", 0x75)
+	if err := repo.UpdateStatus(ctx, first.ID, domain.StatusOpen); err != nil {
+		t.Fatal(err)
+	}
+
+	second := seedIncident(t, db, "postgres refused", "postgres connection refused database timeout", 0x76)
+
+	fa := &fakeAnalyzer{result: okResult("x")}
+	w := newWorker(t, db, fa, &fakeQueue{})
+	if err := w.Handle(ctx, second.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	if len(fa.calls[0].RelatedSummaries) != 0 {
+		t.Errorf("无关历史不该喂给模型, got %v", fa.calls[0].RelatedSummaries)
 	}
 }
 

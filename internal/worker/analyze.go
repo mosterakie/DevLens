@@ -10,6 +10,8 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/mosterakie/DevLens/internal/analyzer"
+	"github.com/mosterakie/DevLens/internal/domain"
+	"github.com/mosterakie/DevLens/internal/fingerprint"
 	"github.com/mosterakie/DevLens/internal/queue"
 	"github.com/mosterakie/DevLens/internal/repository"
 )
@@ -152,13 +154,19 @@ func (w *AnalyzerWorker) Handle(ctx context.Context, incidentID int64) error {
 		return fmt.Errorf("check existing analysis: %w", err)
 	}
 
-	related, err := w.incidents.FindRelated(ctx, inc.Fingerprint, inc.ID, 5)
+	related, err := w.findRelated(ctx, inc)
 	if err != nil {
 		return fmt.Errorf("load related: %w", err)
 	}
 	summaries := make([]string, 0, len(related))
 	for _, r := range related {
-		summaries = append(summaries, fmt.Sprintf("#%d %s", r.ID, r.Title))
+		// 把匹配原因一并写进摘要：模型需要知道哪条是"确定同类"、
+		// 哪条只是"措辞相近"，否则它会把推测当事实来参考。
+		mark := "确定同类"
+		if r.Match == repository.MatchSimilar {
+			mark = "可能同类"
+		}
+		summaries = append(summaries, fmt.Sprintf("#%d %s [%s]", r.ID, r.Title, mark))
 	}
 
 	in := analyzer.Input{
@@ -182,6 +190,66 @@ func (w *AnalyzerWorker) Handle(ctx context.Context, incidentID int64) error {
 		"confidence", result.Analysis.Confidence)
 
 	return w.persist(ctx, incidentID, result)
+}
+
+// findRelated 合并"精确指纹"与"相似度"两路，供模型参考。
+//
+// 为什么 worker 自己实现合并而不是复用 service：依赖方向是
+// worker → repository，worker 拿不到 service（cmd/worker 里也没构造它）。
+// 反向依赖会让 service 成为 worker 的必需前置，而 worker 的逻辑上
+// 并不需要任何业务编排能力。
+//
+// 合并规则本身不在这里重复实现 —— 去重、精确优先、排序都由
+// fingerprint.Merge 提供，service 与 worker 共用同一份规则，
+// 保证喂给模型的历史和用户看到的是同一批。
+func (w *AnalyzerWorker) findRelated(ctx context.Context, inc *domain.Incident) ([]repository.RelatedIncident, error) {
+	exact, err := w.incidents.FindRelated(ctx, inc.Fingerprint, inc.ID, fingerprint.RelatedLimit)
+	if err != nil {
+		return nil, err
+	}
+
+	exactC := make([]fingerprint.Candidate, 0, len(exact))
+	byID := make(map[int64]repository.RelatedIncident, len(exact))
+	for _, r := range exact {
+		exactC = append(exactC, candidateOf(r, fingerprint.MatchExact))
+		byID[r.ID] = r
+	}
+
+	// 相似召回失败时降级为只用精确结果：给模型的补充上下文缺一块，
+	// 远好过整条分析任务因为召回失败而走进 markFailed。
+	cands, err := w.incidents.FindSimilarCandidates(ctx, inc.ID, repository.SimilarRecallLimit)
+	similarC := make([]fingerprint.Candidate, 0, len(cands))
+	if err == nil {
+		base := fingerprint.Tokens(inc.Normalized)
+		for _, c := range cands {
+			score := fingerprint.Jaccard(base, fingerprint.Tokens(c.Normalized))
+			if score < fingerprint.SimilarityThreshold {
+				continue
+			}
+			similarC = append(similarC, candidateOf(c.RelatedIncident, fingerprint.MatchSimilar))
+			if _, ok := byID[c.ID]; !ok {
+				byID[c.ID] = c.RelatedIncident
+			}
+		}
+	}
+
+	merged := fingerprint.Merge(exactC, similarC, fingerprint.RelatedLimit)
+	out := make([]repository.RelatedIncident, 0, len(merged))
+	for _, c := range merged {
+		item := byID[c.ID]
+		item.Match = string(c.Match)
+		out = append(out, item)
+	}
+	return out, nil
+}
+
+func candidateOf(r repository.RelatedIncident, m fingerprint.Match) fingerprint.Candidate {
+	return fingerprint.Candidate{
+		ID:        r.ID,
+		Title:     r.Title,
+		CreatedAt: r.CreatedAt.UnixNano(),
+		Match:     m,
+	}
 }
 
 // truncate 截断字符串，避免日志或标题过长。

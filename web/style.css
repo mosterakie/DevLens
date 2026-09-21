@@ -304,6 +304,23 @@ textarea::placeholder { color: #9aa0aa; }
 .badge.status { color: var(--ink-soft); }
 .badge.recurring { color: #fff; background: var(--red); border-color: var(--red); }
 
+/* 相关历史的匹配原因。
+   两者必须一眼可分：exact 是同一指纹（确定同类），
+   similar 只是措辞接近（可能同类）。视觉上故意让 exact 更"实"、
+   similar 更"虚"，避免用户把推测当成事实。
+   相关历史列表里的徽标要小一号，否则会盖过内容。 */
+.badge.match-exact,
+.badge.match-similar {
+  font-size: 10px;
+  font-weight: 600;
+  padding: 1px 7px;
+  letter-spacing: .4px;
+  text-transform: none;
+  vertical-align: middle;
+}
+.badge.match-exact { color: var(--ink-soft); }
+.badge.match-similar { color: var(--muted); border-style: dashed; }
+
 .meta { color: var(--muted); font-size: 14px; margin-bottom: 16px; }
 .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 13px; }
 

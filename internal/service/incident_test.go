@@ -20,6 +20,7 @@ type fakeRepo struct {
 	nextID       int64
 	createErr    error
 	countErr     error
+	similarErr   error
 	enqueueNever bool
 	statusErr    error
 }
@@ -78,11 +79,46 @@ func (f *fakeRepo) CountByFingerprint(_ context.Context, fp []byte) (int, error)
 func (f *fakeRepo) FindRelated(_ context.Context, fp []byte, excludeID int64, limit int) ([]repository.RelatedIncident, error) {
 	var out []repository.RelatedIncident
 	for _, inc := range f.incidents {
-		if inc.ID == excludeID || string(inc.Fingerprint) != string(fp) {
+		// FAILED 的过滤在真实仓储的 SQL 里（status <> 'FAILED'）。
+		// 假实现必须同样过滤，否则会测出一个生产环境不存在的"缺陷"，
+		// 或者掩盖一个真实缺陷。
+		if inc.ID == excludeID || string(inc.Fingerprint) != string(fp) ||
+			inc.Status == domain.StatusFailed {
 			continue
 		}
 		out = append(out, repository.RelatedIncident{
 			ID: inc.ID, Status: inc.Status, CreatedAt: inc.CreatedAt,
+			Match: repository.MatchExact,
+		})
+		if len(out) >= limit {
+			break
+		}
+	}
+	return out, nil
+}
+
+// FindSimilarCandidates 模拟粗召回：返回除自己以外的全部未失败记录。
+//
+// 真实仓储会按 created_at DESC 截断到 SimilarRecallLimit，
+// 假实现里的记录数远小于该上限，所以顺序对断言没有影响。
+//
+// 这里不做相似度过滤 —— 过滤是 service 的职责（Go 侧算 Jaccard），
+// 假实现如果自己过滤一遍，就把被测逻辑抄了一份，
+// 会让"相似度算错了"这类缺陷测不出来。
+func (f *fakeRepo) FindSimilarCandidates(_ context.Context, excludeID int64, limit int) ([]repository.SimilarCandidate, error) {
+	if f.similarErr != nil {
+		return nil, f.similarErr
+	}
+	var out []repository.SimilarCandidate
+	for _, inc := range f.incidents {
+		if inc.ID == excludeID || inc.Status == domain.StatusFailed {
+			continue
+		}
+		out = append(out, repository.SimilarCandidate{
+			RelatedIncident: repository.RelatedIncident{
+				ID: inc.ID, Status: inc.Status, CreatedAt: inc.CreatedAt,
+			},
+			Normalized: inc.Normalized,
 		})
 		if len(out) >= limit {
 			break
