@@ -16,8 +16,8 @@
 ## 测试规模
 
 ```
-145 个测试，全绿
-├── 单元：114 个
+183 个测试，全绿
+├── 单元：130 个
 │   ├── fingerprint   幂等性、反向断言、边界
 │   ├── domain        状态机、语言解析、置信度降级
 │   ├── analyzer      响应解析、围栏剥离、截断、重试
@@ -26,13 +26,16 @@
 │   ├── metrics       指标渲染
 │   ├── config        .env 解析与优先级
 │   ├── migrate       迁移文件加载与校验
+│   ├── middleware    限流、请求 ID、日志、恢复、指标
 │   └── usecases      真实日志样本上的归一化
-└── 集成：31 个（需要真实 PostgreSQL）
+└── 集成：53 个（需要真实 PostgreSQL 与 Redis）
     ├── repository    事务回滚、幂等、游标分页、级联删除
-    └── migrate       迁移幂等、失败回滚、校验和、baseline
+    ├── migrate       迁移幂等、失败回滚、校验和、baseline
+    ├── queue         队列先进先出、超时、限流窗口
+    └── worker        消费、幂等、失败转移、自愈扫描
 ```
 
-集成测试用 `devlens_test` 库，跑完约 4 秒。`go test -short` 跳过。
+集成测试用 `devlens_test` 库（Redis 用 15 号 db），跑完约 15 秒。`go test -short` 跳过。
 
 ## 集成测试覆盖的约束
 
@@ -150,6 +153,53 @@ fatal: 执行 0001_init.up.sql 失败: 类型 "severity_t" 已经存在
 devcheck 检查的是**错误的库**。
 
 修复：抽一个 `lookup` 函数，与 `config.Load` 使用相同的优先级。
+
+### 10. RateLimit 中间件的 nil logger panic
+
+fail-open 路径直接调用 `log.Warn(...)` 没有判空：
+
+```go
+if err != nil {
+    log.Warn("rate limit unavailable, ...")   // 传 nil 就 panic
+```
+
+风险在于它**只在 Redis 故障时才暴露**——平时测不出来。如果调用方
+漏传 logger，症状是"Redis 抖动时进程崩溃"，比限流失效严重得多。
+
+修复：判空后再记录。允许 nil 是有意的：这个中间件的 fail-open
+特性要求它在依赖缺失时仍能工作，强行要求 logger 与那个设计矛盾。
+
+### 11. BRPOP 不响应 context 取消
+
+实测确认：
+
+```
+取消 context 后，BRPOP 仍然阻塞满 10 秒才返回
+```
+
+这是 go-redis 的行为——`BRPOP` 是单条命令，取消 context 不会主动
+中断服务端的阻塞，命令要等服务端超时才结束。
+
+影响优雅关闭：worker 的 `pollTimeout` 原先设 5 秒，意味着收到退出
+信号后最坏要等 5 秒。改为 1 秒，代价只是空队列时每秒多一次 Redis
+往返。
+
+代码逻辑本身是对的——`Run` 每轮都检查 `ctx.Err()`，靠"短阻塞 +
+循环检查"保证响应。只是那个时间常量设得偏大，而注释暗示了它
+能被立即中断。
+
+### 12. Redis EXPIRE 的最小精度是 1 秒
+
+写限流窗口过期的测试时用了 500ms 和 600ms，go-redis 会打印：
+
+```
+specified duration is 500ms, but minimal supported value is 1s - truncating to 1s
+```
+
+**低于 1 秒的窗口会被静默截断成 1 秒。** 测试因此没测到想测的行为。
+
+这不只是测试问题：如果生产代码里有人把限流窗口设成 500ms，
+它会静默变成 1 秒。已把测试窗口改为 ≥1 秒。
 
 ## Docker 镜像验证
 

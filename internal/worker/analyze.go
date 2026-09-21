@@ -30,6 +30,10 @@ type AnalyzerWorker struct {
 	log       *slog.Logger
 
 	// pollTimeout 是阻塞取任务的超时，同时也是检查退出的间隔。
+	//
+	// 它决定了收到退出信号后最坏要等多久——go-redis 的 BRPOP 不会
+	// 因 context 取消而立即返回，命令要等服务端超时才结束。
+	// 取 1 秒：关闭延迟可接受，代价只是空队列时每秒多一次 Redis 往返。
 	pollTimeout time.Duration
 }
 
@@ -49,7 +53,7 @@ func New(
 		queue:       q,
 		analyzer:    a,
 		log:         log,
-		pollTimeout: 5 * time.Second,
+		pollTimeout: time.Second,
 	}
 }
 

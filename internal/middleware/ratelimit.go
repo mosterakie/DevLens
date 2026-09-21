@@ -39,8 +39,17 @@ func RateLimit(l Limiter, cfg RateLimitConfig, log *slog.Logger) gin.HandlerFunc
 
 		allowed, remaining, resetIn, err := l.RateLimit(c.Request.Context(), key, cfg.Limit, cfg.Window)
 		if err != nil {
-			log.Warn("rate limit unavailable, allowing request",
-				"rule", cfg.Name, "error", err)
+			// Redis 出错时放行（fail-open）并记录日志：限流是保护性设施，
+			// 不是功能性设施。fail-closed 会让核心功能在 Redis 抖动时
+			// 整体不可用。代价是这段时间可能被打满配额，第二道防线是
+			// LLM 客户端的并发上限。
+			//
+			// log 允许为 nil：这个中间件在依赖缺失时也要能用，
+			// 强行要求 logger 与 fail-open 的设计矛盾。
+			if log != nil {
+				log.Warn("rate limit unavailable, allowing request",
+					"rule", cfg.Name, "error", err)
+			}
 			c.Next()
 			return
 		}
