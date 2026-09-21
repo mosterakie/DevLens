@@ -33,6 +33,7 @@ go.work.sum
 
 # 本地构建产物
 /bin/
+/dist/
 *.log
 *.err
 

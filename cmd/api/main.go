@@ -4,7 +4,9 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -75,10 +77,17 @@ func run(log *slog.Logger) error {
 		return float64(d)
 	})
 
-	router := buildRouter(cfg, log, h, db, q, reg, gauges)
+	router, err := buildRouter(cfg, log, h, db, q, reg, gauges)
+	if err != nil {
+		return err
+	}
+
+	// 用 net.JoinHostPort 而不是字符串拼接：BIND_ADDR 可能是 `::1` 这样的
+	// IPv6 地址，直接拼 `::1:8080` 会得到非法地址，JoinHostPort 会补上方括号。
+	addr := net.JoinHostPort(cfg.BindAddr, cfg.Port)
 
 	srv := &http.Server{
-		Addr:              ":" + cfg.Port,
+		Addr:              addr,
 		Handler:           router,
 		ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout:       15 * time.Second,
@@ -103,7 +112,8 @@ func run(log *slog.Logger) error {
 		}
 	}()
 
-	log.Info("api listening", "port", cfg.Port)
+	// 把实际监听地址打进日志：绑错地址时只看 `port=8080` 是发现不了的。
+	log.Info("api listening", "addr", addr, "bind_addr", cfg.BindAddr, "port", cfg.Port)
 	if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		return err
 	}
@@ -152,8 +162,31 @@ func buildRouter(
 	q *queue.Queue,
 	reg *metrics.Registry,
 	gauges *metrics.Gauges,
-) *gin.Engine {
+) (*gin.Engine, error) {
 	r := gin.New()
+
+	// 决定是否采信 X-Forwarded-For。
+	//
+	// gin 默认信任所有代理，也就是直接采信客户端自带的 X-Forwarded-For。
+	// 该头可以随意伪造，而限流是按客户端 IP 分桶的 —— 默认行为等于
+	// 允许调用方每次换一个伪造 IP 绕过限流。
+	//
+	// 因此这里必须显式收口：
+	//   - 没有配置 TRUSTED_PROXIES（默认）→ SetTrustedProxies(nil)，
+	//     ClientIP() 退回 TCP 对端地址，伪造头失效。
+	//   - 配了 → 只有来自这些地址的请求才采信该头，
+	//     这让真实反代后面的用户仍然按真实 IP 分桶。
+	if len(cfg.TrustedProxies) == 0 {
+		if err := r.SetTrustedProxies(nil); err != nil {
+			// 传 nil 不会失败，这里只是防御性处理，避免静默忽略。
+			log.Warn("failed to disable trusted proxies", "error", err)
+		}
+	} else if err := r.SetTrustedProxies(cfg.TrustedProxies); err != nil {
+		// 配错地址属于启动期错误：带着一个无效的信任列表继续跑，
+		// 要么限流失效要么把代理当客户端，两种都不该静默发生。
+		return nil, fmt.Errorf("invalid TRUSTED_PROXIES: %w", err)
+	}
+
 	r.Use(middleware.RequestID())
 	r.Use(middleware.Logger(log))
 	r.Use(middleware.Recovery(log))
@@ -224,7 +257,7 @@ func buildRouter(
 
 	mountWeb(r)
 
-	return r
+	return r, nil
 }
 
 // webFiles 是允许直接访问的前端文件。

@@ -52,6 +52,17 @@ LLM_BASE_URL=https://api.openai.com/v1
 
 # 可选
 PORT=8080
+
+# 监听地址。默认 127.0.0.1：进程只在回环上监听，对外由反向代理承担。
+# 这样进程本身没有公网暴露面 —— 云安全组被误开放也不会直接可达。
+# 容器或反代同机场景需要监听所有网卡时设为 0.0.0.0。
+# 留空视为未设置，回退 127.0.0.1（刻意的失败安全方向）。
+BIND_ADDR=127.0.0.1
+
+# 允许提供 X-Forwarded-For 的代理地址（逗号分隔）。留空 = 不信任任何代理，
+# 客户端 IP 取 TCP 对端地址。只有确实部署了反代才填，否则限流可被伪造头绕过。
+# 例：TRUSTED_PROXIES=127.0.0.1
+TRUSTED_PROXIES=
 LOG_LEVEL=info
 PROMPT_VERSION=v1
 RATE_LIMIT_ANALYZE_PER_MIN=10
@@ -139,6 +150,69 @@ go run ./cmd/devcheck -baseline 3
 启动时自动迁移适合单实例或滚动更新。如果发布流程要求迁移与代码部署
 分离，把 `migrations/` 交给独立的 job 执行即可——`go run ./cmd/devcheck`
 也会报告迁移状态，可以当作部署前的检查步骤。
+
+
+## 监听地址与反向代理
+
+api 默认只监听 `127.0.0.1`（`BIND_ADDR`），**不监听公网网卡**。
+
+这是刻意的：进程本身没有公网暴露面。云安全组是配置在服务器之外的一层，
+改错、误开放、或换机房时忘记收紧都不该让进程直接可达。把进程绑在回环上，
+即使安全组放行了 8080，外部仍然连不上 —— 保护不再只依赖单一防线。
+
+对外访问走同机反向代理（nginx / caddy），由它负责 TLS、域名和限流：
+
+```nginx
+server {
+    listen 443 ssl;
+    server_name devlens.example.com;
+
+    location / {
+        proxy_pass http://127.0.0.1:8080;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+}
+```
+
+三点注意：
+
+- **必须设置 `TRUSTED_PROXIES`**，否则反代传的 IP 会被忽略。
+  api 默认不信任任何代理，客户端 IP 一律取 TCP 对端地址 —— 这能防住
+  伪造 `X-Forwarded-For` 绕过限流，但在反代后面会让所有用户都算成
+  反代自己的 IP（限流误伤）。两种部署方式对应：
+
+  ```bash
+  # 反代与 api 同机
+  TRUSTED_PROXIES=127.0.0.1
+  # 反代在另一台机器
+  TRUSTED_PROXIES=10.0.0.5
+  ```
+
+- nginx 要传 `X-Real-IP` / `X-Forwarded-For`（见上面的配置），
+  否则限流看到的是反代地址。
+
+- `BIND_ADDR=0.0.0.0` 只在反代位于另一台机器时才需要。那时**必须**靠安全组
+  限制只有反代能连 api 端口，不能对全网开放 —— 否则 api 又直接暴露了。
+
+## 直接暴露端口时（无反代）
+
+没有反代、直接用 `http://IP:8080` 访问是可行的，改动只有一处：
+
+```bash
+BIND_ADDR=0.0.0.0
+TRUSTED_PROXIES=        # 保持留空
+```
+
+`TRUSTED_PROXIES` 留空这件事在这个模式下**是安全前提，不是可选**：
+入口没有任何代理，所有请求都直连 api，此时若信任 `X-Forwarded-For`，
+任何调用方都能每次换一个伪造 IP 绕过限流（实测可复现）。留空后
+`ClientIP()` 只认 TCP 对端地址，伪造头失效。
+
+这个模式没有 TLS、也没有鉴权，任何能访问该端口的人都能提交日志并消耗
+LLM 配额。仅建议用于临时演示；长期使用请走上面的反向代理模式。
 
 ## Dockerfile
 
