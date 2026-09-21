@@ -140,7 +140,7 @@ func (r *Runner) verifySchema(ctx context.Context, conn *pgxpool.Conn, tables []
 		err := conn.QueryRow(ctx, `
 			SELECT EXISTS (
 				SELECT 1 FROM information_schema.tables
-				WHERE table_schema = 'public' AND table_name = $1
+				WHERE table_schema = current_schema() AND table_name = $1
 			)`, t).Scan(&exists)
 		if err != nil {
 			return fmt.Errorf("检查表 %s: %w", t, err)

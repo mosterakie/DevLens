@@ -9,6 +9,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"github.com/mosterakie/DevLens/internal/domain"
+	"github.com/mosterakie/DevLens/internal/middleware"
 	"github.com/mosterakie/DevLens/internal/repository"
 	"github.com/mosterakie/DevLens/internal/service"
 )
@@ -111,6 +112,12 @@ type statusRequest struct {
 func (h *IncidentHandler) Analyze(c *gin.Context) {
 	var req analyzeRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
+		// 请求体超限与 JSON 格式错误要分开：前者应当提示"精简内容"，
+		// 后者提示"请求写错了"，两者的处理方式完全不同。
+		if middleware.IsBodyTooLarge(err) {
+			middleware.AbortTooLarge(c, middleware.MaxBodyBytes)
+			return
+		}
 		fail(c, http.StatusBadRequest, CodeInvalidRequest, "invalid JSON body")
 		return
 	}

@@ -256,11 +256,17 @@ func (r *Runner) appliedSet(ctx context.Context, conn *pgxpool.Conn) (map[int]st
 func Status(ctx context.Context, pool *pgxpool.Pool, migrations []Migration) (applied, total int, err error) {
 	total = len(migrations)
 
+	// 用 current_schema() 而不是硬编码 'public'。
+	//
+	// 表未必要建在 public 上：部署时可能用独立 schema 做权限隔离。
+	// 写死 public 会让那种环境下永远报"还没有迁移记录"——
+	// 而这个问题只在非 public schema 下才暴露。
 	var exists bool
 	err = pool.QueryRow(ctx, `
 		SELECT EXISTS (
 			SELECT 1 FROM information_schema.tables
-			WHERE table_schema = 'public' AND table_name = 'schema_migrations'
+			WHERE table_schema = current_schema()
+			  AND table_name = 'schema_migrations'
 		)`).Scan(&exists)
 	if err != nil {
 		return 0, total, fmt.Errorf("检查 schema_migrations: %w", err)

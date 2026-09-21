@@ -13,7 +13,14 @@ const SRC = path.join(__dirname, '..', 'web', 'i18n.js');
 
 // 技术术语在中文界面里保留英文是刻意的选择，
 // 校验时应当排除，否则会把它们误报成漏翻。
-const TECH_TERMS = /\b(Incident|Incidents|AI|ID|API|URL|DevLens|RECURRING|English|HTTP|JSON)\b/g;
+// 技术术语在中文界面里保留英文是刻意的选择，校验时应当排除，
+// 否则会被误报成漏翻。
+//
+// 只收录"没有通行中文译法、或译法反而更生僻"的词。放宽这个名单
+// 会掩盖真正的漏翻，所以要克制：
+//   token  —— 译"令牌"在工程语境里反而少见
+//   log    —— 译"日志"有，但"log"作为字段名/命令更常见
+const TECH_TERMS = /\b(Incident|Incidents|AI|ID|API|URL|DevLens|RECURRING|English|HTTP|JSON|token|log|demo|Server|Error)\b/gi;
 // 占位符形如 {n} {from} {to}，不是待翻译的内容。
 const PLACEHOLDERS = /\{[a-zA-Z_]+\}/g;
 

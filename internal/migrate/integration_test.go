@@ -8,47 +8,34 @@ import (
 	"testing"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/mosterakie/DevLens/internal/testsupport"
 )
 
-// 集成测试需要真实 PostgreSQL，用与 repository 相同的 TEST_DATABASE_URL。
-// 库名不以 _test 结尾时拒绝运行：测试会建表删表。
+// 集成测试需要真实 PostgreSQL。
+//
+// 用独立 schema：go test ./... 按包并行，各包都在 public 上建表删表
+// 会互相踩踏，表现为随机失败。详见 internal/testsupport。
+const testSchema = "test_migrate"
 
+// testPool 返回限定在该 schema 上的连接池。
 func testPool(t *testing.T) *pgxpool.Pool {
 	t.Helper()
-	if testing.Short() {
-		t.Skip("跳过集成测试（-short）")
-	}
 
-	dsn := os.Getenv("TEST_DATABASE_URL")
-	if dsn == "" {
-		dsn = "postgres://devlens:devlens@127.0.0.1:5432/devlens_test?sslmode=disable"
-	}
-
-	cfg, err := pgxpool.ParseConfig(dsn)
-	if err != nil {
-		t.Fatalf("解析连接串: %v", err)
-	}
-	if db := cfg.ConnConfig.Database; len(db) < 5 || db[len(db)-5:] != "_test" {
-		t.Fatalf("拒绝在库 %q 上运行：库名必须以 _test 结尾（测试会建表删表）", db)
-	}
-
-	ctx := context.Background()
-	pool, err := pgxpool.New(ctx, dsn)
-	if err != nil {
-		t.Skipf("连接测试库失败，跳过: %v", err)
-	}
-	t.Cleanup(pool.Close)
-
-	// 每次测试从干净状态开始。只删本包会创建的对象。
+	pool := testsupport.Pool(t, testSchema)
 	reset(t, pool)
 	return pool
 }
 
-// reset 删掉迁移测试可能创建的表，让每次测试互不影响。
+// reset 删掉迁移测试可能创建的对象，让每次测试互不影响。
+//
+// 只动自己的 schema，所以并行跑的其它包不受影响。
 func reset(t *testing.T, pool *pgxpool.Pool) {
 	t.Helper()
-	const sql = `
-		DROP TABLE IF EXISTS schema_migrations, mig_alpha, mig_beta, mig_gamma CASCADE;`
+
+	sql := "DROP TABLE IF EXISTS " + testSchema + ".schema_migrations, " +
+		testSchema + ".mig_alpha, " + testSchema + ".mig_beta, " +
+		testSchema + ".mig_gamma CASCADE"
 	if _, err := pool.Exec(context.Background(), sql); err != nil {
 		t.Fatalf("清理失败: %v", err)
 	}
@@ -83,21 +70,22 @@ func TestApplyCreatesSchema(t *testing.T) {
 		t.Fatalf("Apply 失败: %v", err)
 	}
 
-	// 表建出来了。
+	// 表建出来了。只查自己的 schema，避免被 public 里的同名表误导。
 	for _, table := range []string{"mig_alpha", "mig_beta"} {
 		var exists bool
 		err := pool.QueryRow(ctx, `
-			SELECT EXISTS (SELECT 1 FROM information_schema.tables
-			WHERE table_name = $1)`, table).Scan(&exists)
+			SELECT EXISTS (
+				SELECT 1 FROM information_schema.tables
+				WHERE table_schema = $1 AND table_name = $2
+			)`, testSchema, table).Scan(&exists)
 		if err != nil {
 			t.Fatal(err)
 		}
 		if !exists {
-			t.Errorf("表 %s 未创建", table)
+			t.Errorf("表 %s.%s 未创建", testSchema, table)
 		}
 	}
 
-	// 版本登记了。
 	applied, total, err := Status(ctx, pool, migs)
 	if err != nil {
 		t.Fatal(err)
@@ -107,7 +95,7 @@ func TestApplyCreatesSchema(t *testing.T) {
 	}
 }
 
-// TestApplyIsIdempotent 是这一版最重要的性质：重复启动不能重复执行。
+// TestApplyIsIdempotent 是最重要的一条：重复启动不能重复执行。
 //
 // 迁移里的 CREATE TABLE 没有 IF NOT EXISTS，第二次执行必然报错。
 func TestApplyIsIdempotent(t *testing.T) {
@@ -126,7 +114,6 @@ func TestApplyIsIdempotent(t *testing.T) {
 	if err := runner.Apply(ctx, migs); err != nil {
 		t.Fatalf("首次 Apply 失败: %v", err)
 	}
-	// 第二次必须跳过而不是重复执行。
 	if err := runner.Apply(ctx, migs); err != nil {
 		t.Fatalf("重复 Apply 应当跳过，实际失败: %v", err)
 	}
@@ -142,7 +129,7 @@ func TestApplyIsIdempotent(t *testing.T) {
 
 // TestFailedMigrationRollsBack 验证失败的迁移完全回滚。
 //
-// 关键点：失败的那条里已经执行成功的语句也必须撤销，
+// 关键点：失败那条里已经执行成功的语句也必须撤销，
 // 否则会留下半成品结构——而版本号又没登记，重试时会再撞一次。
 func TestFailedMigrationRollsBack(t *testing.T) {
 	pool := testPool(t)
@@ -150,7 +137,6 @@ func TestFailedMigrationRollsBack(t *testing.T) {
 
 	dir := migDir(t, map[string]string{
 		"0001_alpha.up.sql": "CREATE TABLE mig_alpha (id int PRIMARY KEY);",
-		// 第二条先建表再引用不存在的表，整条应当回滚。
 		"0002_beta.up.sql": "CREATE TABLE mig_beta (id int PRIMARY KEY);\n" +
 			"INSERT INTO table_that_does_not_exist VALUES (1);",
 	})
@@ -160,8 +146,7 @@ func TestFailedMigrationRollsBack(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	err = New(pool, nil).Apply(ctx, migs)
-	if err == nil {
+	if err := New(pool, nil).Apply(ctx, migs); err == nil {
 		t.Fatal("迁移应当失败")
 	}
 
@@ -169,7 +154,8 @@ func TestFailedMigrationRollsBack(t *testing.T) {
 	var hasAlpha bool
 	if err := pool.QueryRow(ctx, `
 		SELECT EXISTS (SELECT 1 FROM information_schema.tables
-		WHERE table_name = 'mig_alpha')`).Scan(&hasAlpha); err != nil {
+		WHERE table_schema = $1 AND table_name = 'mig_alpha')`,
+		testSchema).Scan(&hasAlpha); err != nil {
 		t.Fatal(err)
 	}
 	if !hasAlpha {
@@ -180,14 +166,14 @@ func TestFailedMigrationRollsBack(t *testing.T) {
 	var hasBeta bool
 	if err := pool.QueryRow(ctx, `
 		SELECT EXISTS (SELECT 1 FROM information_schema.tables
-		WHERE table_name = 'mig_beta')`).Scan(&hasBeta); err != nil {
+		WHERE table_schema = $1 AND table_name = 'mig_beta')`,
+		testSchema).Scan(&hasBeta); err != nil {
 		t.Fatal(err)
 	}
 	if hasBeta {
 		t.Error("0002 失败后 mig_beta 应当被回滚")
 	}
 
-	// 失败的不登记版本，否则重试会看到"已完成"而跳过。
 	applied, _, err := Status(ctx, pool, migs)
 	if err != nil {
 		t.Fatal(err)
@@ -228,13 +214,11 @@ func TestChecksumMismatchIsDetected(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	err = New(pool, nil).Apply(ctx, changed)
-	if !errors.Is(err, ErrChecksumMismatch) {
+	if err := New(pool, nil).Apply(ctx, changed); !errors.Is(err, ErrChecksumMismatch) {
 		t.Errorf("应当报 ErrChecksumMismatch, got %v", err)
 	}
 }
 
-// TestApplyEmptyIsNoop 确认没有迁移时不报错。
 func TestApplyEmptyIsNoop(t *testing.T) {
 	pool := testPool(t)
 	if err := New(pool, nil).Apply(context.Background(), nil); err != nil {
@@ -242,7 +226,6 @@ func TestApplyEmptyIsNoop(t *testing.T) {
 	}
 }
 
-// TestStatusBeforeAnyMigration 确认在从未迁移过的库上 Status 不报错。
 func TestStatusBeforeAnyMigration(t *testing.T) {
 	pool := testPool(t)
 	applied, total, err := Status(context.Background(), pool, []Migration{{Version: 1}})

@@ -19,6 +19,10 @@
     <section>
       <h3 data-i18n="analyze.log"></h3>
       <textarea id="log" data-i18n-placeholder="analyze.placeholder"></textarea>
+      <div class="field-note">
+        <span id="size-hint" class="size-hint"></span>
+      </div>
+      <p class="redact-note" data-i18n="analyze.redact"></p>
       <div class="actions">
         <button id="submit" class="btn-primary" data-i18n="analyze.submit"></button>
         <button id="sample" data-i18n="analyze.sample"></button>
@@ -66,6 +70,42 @@
   const params = new URLSearchParams(location.search);
   if (params.get('sample') === '1') logEl.value = SAMPLE;
 
+  // 日志字段的上限，与后端 domain.MaxLogBytes 保持一致。
+  const MAX_LOG_BYTES = 64 * 1024;
+
+  const sizeHintEl = document.getElementById('size-hint');
+
+  // byteLength 用 TextEncoder 而不是 log.length。
+  //
+  // length 数的是 UTF-16 码元，一个中文字符在 UTF-8 里占 3 字节。
+  // 用 length 判断会让中文日志的上限实际变成约 21KB。
+  const encoder = new TextEncoder();
+  function byteLength(s) {
+    return encoder.encode(s).length;
+  }
+
+  function formatSize(bytes) {
+    if (bytes < 1024) return bytes + ' B';
+    return (bytes / 1024).toFixed(1) + ' KB';
+  }
+
+  // updateSizeHint 在输入时实时显示占用，超限时给出视觉提示。
+  //
+  // 前端先挡一道，避免用户白跑一次网络请求；后端仍会再校验一次
+  //（前端校验不可信）。
+  function updateSizeHint() {
+    const size = byteLength(logEl.value);
+    const over = size > MAX_LOG_BYTES;
+
+    sizeHintEl.textContent = I.t(over ? 'analyze.overlimit' : 'analyze.sizeok', {
+      size: formatSize(size),
+    });
+    sizeHintEl.classList.toggle('over', over);
+    submitBtn.disabled = over;
+  }
+
+  logEl.addEventListener('input', updateSizeHint);
+
   let pollTimer = null;
   let currentId = null;
   let currentData = null;
@@ -82,6 +122,7 @@
     resultEl.className = 'panel empty';
     resultEl.textContent = I.t('analyze.empty');
     history.replaceState(null, '', 'analyze.html');
+    updateSizeHint();
   };
 
   submitBtn.onclick = async () => {
@@ -90,6 +131,10 @@
 
     if (log.trim().length === 0) {
       showError(inputErrorEl, I.t('analyze.needlog'));
+      return;
+    }
+    if (byteLength(log) > MAX_LOG_BYTES) {
+      showError(inputErrorEl, I.t('analyze.toolong'));
       return;
     }
 
@@ -116,6 +161,9 @@
   function errorText(err) {
     if (err.code === 'INVALID_LOG') return I.t('analyze.rejected') + err.message;
     if (err.code === 'RATE_LIMITED') return I.t('analyze.ratelimited');
+    // 请求体在中间件层就被拒绝，这时没有经过字段校验，
+    // 所以要单独给一条与"日志字段过长"不同的文案。
+    if (err.code === 'PAYLOAD_TOO_LARGE' || err.status === 413) return I.t('analyze.payload');
     return err.message || I.t('analyze.failed');
   }
 
@@ -230,6 +278,9 @@
       resultEl.textContent = I.t('analyze.empty');
     }
   });
+
+  // 初始化时显示一次，让用户一眼看到当前占用。
+  updateSizeHint();
 
   if (params.get('id')) {
     const id = Number(params.get('id'));

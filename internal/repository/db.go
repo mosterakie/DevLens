@@ -49,6 +49,14 @@ func New(ctx context.Context, dsn string) (*DB, error) {
 	return &DB{pool: pool}, nil
 }
 
+// NewWithPool 用一个已有的连接池构造 DB。
+//
+// 用于调用方已经持有连接池的场景：集成测试要把连接的 search_path
+// 指向自己的 schema，所以需要先建池再交给这里的场景。
+func NewWithPool(pool *pgxpool.Pool) *DB {
+	return &DB{pool: pool}
+}
+
 // Close 释放连接池。
 func (db *DB) Close() {
 	if db != nil && db.pool != nil {

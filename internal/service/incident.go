@@ -8,6 +8,7 @@ import (
 
 	"github.com/mosterakie/DevLens/internal/domain"
 	"github.com/mosterakie/DevLens/internal/fingerprint"
+	"github.com/mosterakie/DevLens/internal/redact"
 	"github.com/mosterakie/DevLens/internal/repository"
 )
 
@@ -77,9 +78,19 @@ func (s *IncidentService) SubmitLang(ctx context.Context, rawLog string, lang do
 	if !lang.IsValid() {
 		lang = domain.DefaultLang()
 	}
+
+	// 长度校验在脱敏之前：按用户提交的原始大小判断。
+	// 脱敏通常让文本变短，按脱敏后判断等于悄悄放宽了限制。
 	if err := domain.ValidateLog(rawLog); err != nil {
 		return nil, err
 	}
+
+	// 脱敏在指纹计算之前。日志会发给外部模型，一旦发出去就收不回来，
+	// 所以凭据必须在离开服务之前去掉；存库的也是脱敏后的版本。
+	//
+	// 顺序很关键：指纹基于脱敏后的文本。好处是 token 不同的同一类
+	// 问题会归到一起（都变成 token=***），符合"同类判定"的语义。
+	rawLog = redact.Apply(rawLog)
 
 	normalized := fingerprint.Normalize(rawLog)
 	fp := fingerprint.Compute(normalized)

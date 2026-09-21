@@ -175,7 +175,10 @@ func buildRouter(
 		Window: time.Minute,
 		ByIP:   false,
 	}, log)
-	v1.POST("/incidents/analyze", analyzeLimit, analyzeGlobal, h.Analyze)
+	// 请求体上限放在最前面：超大的请求在进入限流与解析之前就被挡掉，
+	// 不占用限流配额，也不会先在内存里展开。
+	bodyLimit := middleware.BodyLimit(middleware.MaxBodyBytes)
+	v1.POST("/incidents/analyze", bodyLimit, analyzeLimit, analyzeGlobal, h.Analyze)
 
 	// 轮询用的读取接口，限额要明显宽于提交：1 秒一次轮询即 60 次/分钟。
 	// 这个数字必须和提交限额一起设计，否则轮询会把自己限流掉。

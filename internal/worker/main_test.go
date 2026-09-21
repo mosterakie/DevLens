@@ -7,7 +7,6 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
-	"strings"
 	"testing"
 	"time"
 
@@ -16,54 +15,32 @@ import (
 	"github.com/mosterakie/DevLens/internal/analyzer"
 	"github.com/mosterakie/DevLens/internal/domain"
 	"github.com/mosterakie/DevLens/internal/repository"
+	"github.com/mosterakie/DevLens/internal/testsupport"
 )
 
 // 集成测试需要真实 PostgreSQL。
 //
-// 库名必须以 _test 结尾：测试会清空全部表。go test -short 跳过。
+// 用独立 schema：go test ./... 按包并行，各包都在 public 上建表删表
+// 会互相踩踏，表现为随机失败（"关系 incidents 不存在"）。
+// 详见 internal/testsupport。
+const testSchema = "test_worker"
 
-func testDSN(t *testing.T) string {
-	t.Helper()
-	dsn := os.Getenv("TEST_DATABASE_URL")
-	if dsn == "" {
-		dsn = "postgres://devlens:devlens@127.0.0.1:5432/devlens_test?sslmode=disable"
-	}
-	return dsn
-}
-
-// setupDB 建立连接、建表、清空数据。
+// setupDB 建连接、应用迁移、清空数据。
 func setupDB(t *testing.T) *repository.DB {
 	t.Helper()
-	if testing.Short() {
-		t.Skip("跳过集成测试（-short）")
-	}
 
-	dsn := testDSN(t)
-	cfg, err := pgxpool.ParseConfig(dsn)
-	if err != nil {
-		t.Fatalf("解析连接串: %v", err)
-	}
-	if db := cfg.ConnConfig.Database; len(db) < 5 || db[len(db)-5:] != "_test" {
-		t.Fatalf("拒绝在库 %q 上运行：库名必须以 _test 结尾（测试会清空所有表）", db)
-	}
+	pool := testsupport.Pool(t, testSchema)
+	applyMigrations(t, pool)
+	testsupport.Truncate(t, pool, testSchema)
 
-	ctx := context.Background()
-	db, err := repository.New(ctx, dsn)
-	if err != nil {
-		t.Skipf("连接测试库失败，跳过: %v", err)
-	}
-	t.Cleanup(db.Close)
-
-	applyMigrations(t, db)
-	reset(t, db)
-	return db
+	return repository.NewWithPool(pool)
 }
 
 // applyMigrations 按文件名顺序执行 migrations 下的 up 脚本。
-func applyMigrations(t *testing.T, db *repository.DB) {
+func applyMigrations(t *testing.T, pool *pgxpool.Pool) {
 	t.Helper()
-	dir := findMigrationsDir(t)
 
+	dir := testsupport.FindMigrationsDir(t)
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		t.Fatalf("读取迁移目录: %v", err)
@@ -71,66 +48,30 @@ func applyMigrations(t *testing.T, db *repository.DB) {
 
 	var ups []string
 	for _, e := range entries {
-		if !e.IsDir() && strings.HasSuffix(e.Name(), ".up.sql") {
+		if !e.IsDir() && filepath.Ext(e.Name()) == ".sql" &&
+			len(e.Name()) > 7 && e.Name()[len(e.Name())-7:] == ".up.sql" {
 			ups = append(ups, e.Name())
 		}
 	}
 	sort.Strings(ups)
 
 	ctx := context.Background()
-	// 先清掉，让迁移能从零执行。
-	dropAll(t, db)
+	testsupport.DropAll(t, pool, testSchema)
 
 	for _, name := range ups {
 		body, err := os.ReadFile(filepath.Join(dir, name))
 		if err != nil {
 			t.Fatalf("读取 %s: %v", name, err)
 		}
-		if _, err := db.Pool().Exec(ctx, string(body)); err != nil {
+		if _, err := pool.Exec(ctx, string(body)); err != nil {
 			t.Fatalf("执行 %s: %v", name, err)
 		}
 	}
 }
 
-func dropAll(t *testing.T, db *repository.DB) {
-	t.Helper()
-	const sql = `
-		DROP TABLE IF EXISTS comments, incident_events, incident_analysis, incidents, users, schema_migrations CASCADE;
-		DROP TYPE IF EXISTS status_t, severity_t CASCADE;`
-	if _, err := db.Pool().Exec(context.Background(), sql); err != nil {
-		t.Fatalf("清理对象: %v", err)
-	}
-}
-
-func reset(t *testing.T, db *repository.DB) {
-	t.Helper()
-	const sql = `TRUNCATE incidents, incident_analysis, incident_events, comments RESTART IDENTITY CASCADE;`
-	if _, err := db.Pool().Exec(context.Background(), sql); err != nil {
-		t.Fatalf("清空数据: %v", err)
-	}
-}
-
-func findMigrationsDir(t *testing.T) string {
-	t.Helper()
-	wd, err := os.Getwd()
-	if err != nil {
-		t.Fatal(err)
-	}
-	dir := wd
-	for i := 0; i < 6; i++ {
-		candidate := filepath.Join(dir, "migrations")
-		if st, err := os.Stat(candidate); err == nil && st.IsDir() {
-			return candidate
-		}
-		parent := filepath.Dir(dir)
-		if parent == dir {
-			break
-		}
-		dir = parent
-	}
-	t.Fatalf("未找到 migrations 目录（从 %s 向上查找）", wd)
-	return ""
-}
+// errQueueEmpty 供假队列使用。队列包有自己的 ErrQueueEmpty，
+// 但这里不需要依赖它——worker 只判断是不是错误。
+var errQueueEmpty = errors.New("queue empty")
 
 // --- 假实现 ---
 
@@ -185,7 +126,7 @@ func (q *fakeQueue) DequeueAnalyze(_ context.Context, _ time.Duration) (int64, e
 		return 0, q.err
 	}
 	if q.idx >= len(q.ids) {
-		return 0, errors.New("queue empty")
+		return 0, errQueueEmpty
 	}
 	id := q.ids[q.idx]
 	q.idx++

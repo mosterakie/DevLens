@@ -32,12 +32,19 @@ func (f *fakeRepo) Create(_ context.Context, in repository.CreateIncidentInput) 
 	if f.createErr != nil {
 		return nil, f.createErr
 	}
+	// 字段要与真实仓储一致：漏掉 Lang 之类的字段会让依赖它的
+	// 断言在测假实现而不是生产代码。
+	lang := in.Lang
+	if !lang.IsValid() {
+		lang = domain.DefaultLang()
+	}
 	inc := &domain.Incident{
 		ID:          f.nextID,
 		RawLog:      in.RawLog,
 		Normalized:  in.Normalized,
 		Fingerprint: in.Fingerprint,
 		Status:      domain.StatusAnalyzing,
+		Lang:        lang,
 		CreatedAt:   time.Now(),
 		UpdatedAt:   time.Now(),
 	}
